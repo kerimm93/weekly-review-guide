@@ -519,6 +519,13 @@
 
   <script>
     var LKEY = 'weekly_review_orchestrator_v1';
+    var GIST_FILE = 'weekly_review_orchestrator_data.json';
+    var GIST_TOKEN_KEY = 'weekly_review_orchestrator_gist_token';
+    var GIST_ID_KEY = 'weekly_review_orchestrator_gist_id';
+    var GIST_API_ROOT = 'https://api.github.com/gists/';
+    var AUTO_SYNC_DELAY = 30000;
+    var autoSyncTimer = null;
+    var hasTriedStartupSync = false;
 
     var TABS = [
       { id: 'dashboard', label: 'Dashboard' },
@@ -703,13 +710,15 @@
       });
     }
 
-    function save() {
+    function save(skipAutoSync, preserveExported, preserveActiveSessionTimestamp) {
+      if (!preserveExported || !S._lastExported) S._lastExported = new Date().toISOString();
       var session = getSession();
-      if (session) session.updatedAt = new Date().toISOString();
+      if (session && !preserveActiveSessionTimestamp) session.updatedAt = new Date().toISOString();
       try {
         localStorage.setItem(LKEY, JSON.stringify(S));
       } catch (e) {}
       updateMeta();
+      if (!skipAutoSync) gistAutoSyncDebounced();
     }
 
     function getSession() {
@@ -722,7 +731,7 @@
       return session.steps.find(function (s) { return s.id === stepId; }) || null;
     }
 
-    function switchTab(tabId) {
+    function switchTab(tabId, skipSave) {
       S.currentTab = tabId;
       document.querySelectorAll('.tab-btn').forEach(function (btn) {
         btn.classList.toggle('active', btn.dataset.tab === tabId);
@@ -730,7 +739,7 @@
       document.querySelectorAll('.panel').forEach(function (panel) {
         panel.classList.toggle('active', panel.id === 'panel-' + tabId);
       });
-      save();
+      if (!skipSave) save();
     }
 
     function renderTabs() {
@@ -911,7 +920,66 @@
     }
 
     function exportHTML(session) {
-      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">JSON / Markdown</div>\n              <div class="btn-row">\n                <button class="btn btn-q" onclick="exportJSON()">Session als JSON exportieren</button>\n                <button class="btn btn-s" onclick="exportMarkdown()">Session als Markdown exportieren</button>\n              </div>\n              <label>Import JSON</label>\n              <textarea class="compact" id="importBox" placeholder="Hier exportiertes JSON einfügen"></textarea>\n              <div class="btn-row" style="margin-top:10px">\n                <button class="btn btn-v" onclick="importJSON()">JSON importieren</button>\n                <button class="btn btn-d" onclick="resetCurrentSession()">Aktive Session zurücksetzen</button>\n              </div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktuelle Session kompakt</div>\n              <div class="kv"><div class="k">Wochenlabel</div><div>' + esc(session.weekLabel) + '</div></div>\n              <div class="kv"><div class="k">Review-Datum</div><div>' + esc(session.reviewDate) + '</div></div>\n              <div class="kv"><div class="k">Letzter Weekly Log</div><div>' + esc(session.lastWeeklyLogUrl || '—') + '</div></div>\n              <div class="kv"><div class="k">Aktueller Fokus</div><div>' + esc(session.currentFocus || '—') + '</div></div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Bausteine in dieser App</div>\n              <div class="tag">Weekly-Log-Setup</div>\n              <div class="tag">Daily-Notes-Abschluss</div>\n              <div class="tag">Obsidian-Umwandlung</div>\n              <div class="tag">Annotationsprompt</div>\n              <div class="tag">Quant-Daten</div>\n              <div class="tag">Migration</div>\n              <div class="tag">Review-Start</div>\n              <div class="tag">Review-Zusammenfassung</div>\n              <div class="notice info" style="margin-top:12px">Die App ruft kein Modell direkt auf. Sie ist bewusst als Prompt-Handoff-Werkzeug gebaut: Du generierst, kopierst und gibst die Prompts in den passenden Chat weiter.</div>\n            </div>\n          </div>\n        </div>\n      ';
+      var cfg = getGistConfig();
+      return `
+        <div class="grid-2">
+          <div>
+            <div class="qs">
+              <div class="qh">GitHub Gist Sync</div>
+              <div class="notice info">Basiert auf deinem Projektstandard: Token und Gist-ID werden separat in localStorage gespeichert, nie im JSON-Export. Cloud-Datei: <strong>${esc(GIST_FILE)}</strong>.</div>
+              <label>GitHub Token</label>
+              <input type="password" value="${esc(cfg.token)}" onchange="setGistToken(this.value)" placeholder="ghp_... oder feingranulares Token mit Gists-Zugriff" />
+              <label>Gist-ID</label>
+              <input value="${esc(cfg.gistId)}" onchange="setGistId(this.value)" placeholder="32-stellige oder längere Gist-ID" />
+              <div class="small" style="margin-top:8px">Status: ${esc(gistStatusText())}</div>
+              <div class="btn-row" style="margin-top:12px">
+                <button class="btn btn-v" onclick="gistPush(false, false)">☁ Jetzt speichern</button>
+                <button class="btn btn-s" onclick="gistPull()">↓ Von Gist laden</button>
+                <button class="btn btn-m" onclick="mergeFromGist()">⊕ Merge</button>
+                <button class="btn btn-d" onclick="clearGistConfig()">Konfig löschen</button>
+              </div>
+              <div class="small" style="margin-top:10px">Auto-Sync läuft 30 Sekunden nach jeder echten Änderung. Wenn die Cloud neuer ist, blockiert Upload bewusst und verweist dich auf Merge oder Download.</div>
+            </div>
+
+            <div class="qs">
+              <div class="qh">JSON / Markdown</div>
+              <div class="btn-row">
+                <button class="btn btn-q" onclick="exportJSON()">Session als JSON exportieren</button>
+                <button class="btn btn-s" onclick="exportMarkdown()">Session als Markdown exportieren</button>
+              </div>
+              <label>Import JSON</label>
+              <textarea class="compact" id="importBox" placeholder="Hier exportiertes JSON einfügen"></textarea>
+              <div class="btn-row" style="margin-top:10px">
+                <button class="btn btn-v" onclick="importJSON()">JSON importieren</button>
+                <button class="btn btn-d" onclick="resetCurrentSession()">Aktive Session zurücksetzen</button>
+              </div>
+            </div>
+
+            <div class="qs">
+              <div class="qh">Aktuelle Session kompakt</div>
+              <div class="kv"><div class="k">Wochenlabel</div><div>${esc(session.weekLabel)}</div></div>
+              <div class="kv"><div class="k">Review-Datum</div><div>${esc(session.reviewDate)}</div></div>
+              <div class="kv"><div class="k">Letzter Weekly Log</div><div>${esc(session.lastWeeklyLogUrl || '—')}</div></div>
+              <div class="kv"><div class="k">Aktueller Fokus</div><div>${esc(session.currentFocus || '—')}</div></div>
+            </div>
+          </div>
+
+          <div>
+            <div class="qs">
+              <div class="qh">Prompt-Bausteine in dieser App</div>
+              <div class="tag">Weekly-Log-Setup</div>
+              <div class="tag">Daily-Notes-Abschluss</div>
+              <div class="tag">Obsidian-Umwandlung</div>
+              <div class="tag">Annotationsprompt</div>
+              <div class="tag">Quant-Daten</div>
+              <div class="tag">Migration</div>
+              <div class="tag">Review-Start</div>
+              <div class="tag">Review-Zusammenfassung</div>
+              <div class="notice info" style="margin-top:12px">Die App ruft kein Modell direkt auf. Sie ist bewusst als Prompt-Handoff-Werkzeug gebaut. Der Gist-Sync speichert nur den App-State, nie den Token.</div>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
     function buildPrompt(type, copyDirectly) {
@@ -1245,6 +1313,374 @@
       return [shared, '', 'Kein Prompt für Typ: ' + type].join('\n');
     }
 
+    function deepClone(obj) {
+      return JSON.parse(JSON.stringify(obj));
+    }
+
+    function getGistConfig() {
+      return {
+        token: (localStorage.getItem(GIST_TOKEN_KEY) || '').trim(),
+        gistId: (localStorage.getItem(GIST_ID_KEY) || '').trim()
+      };
+    }
+
+    function hasGistConfig() {
+      var cfg = getGistConfig();
+      return !!(cfg.token && cfg.gistId);
+    }
+
+    function gistStatusText() {
+      if (!hasGistConfig()) return 'Nicht konfiguriert';
+      return 'Bereit · Datei: ' + GIST_FILE;
+    }
+
+    function setGistToken(value) {
+      if ((value || '').trim()) localStorage.setItem(GIST_TOKEN_KEY, value.trim());
+      else localStorage.removeItem(GIST_TOKEN_KEY);
+      renderAll();
+      toast('Token lokal gespeichert');
+    }
+
+    function setGistId(value) {
+      if ((value || '').trim()) localStorage.setItem(GIST_ID_KEY, value.trim());
+      else localStorage.removeItem(GIST_ID_KEY);
+      renderAll();
+      toast('Gist-ID lokal gespeichert');
+    }
+
+    function clearGistConfig() {
+      var ok = confirm('GitHub-Token und Gist-ID wirklich lokal löschen?');
+      if (!ok) return;
+      localStorage.removeItem(GIST_TOKEN_KEY);
+      localStorage.removeItem(GIST_ID_KEY);
+      renderAll();
+      toast('Gist-Konfiguration gelöscht');
+    }
+
+    function githubHeaders(token, includeContentType) {
+      var h = {
+        'Authorization': 'token ' + token,
+        'Accept': 'application/vnd.github+json'
+      };
+      if (includeContentType) h['Content-Type'] = 'application/json';
+      return h;
+    }
+
+    async function fetchWithTimeoutRetry(url, options, timeoutMs, retries) {
+      var lastErr = null;
+      var maxRetries = retries || 0;
+      for (var attempt = 0; attempt <= maxRetries; attempt++) {
+        var controller = new AbortController();
+        var timer = setTimeout(function () { controller.abort(); }, timeoutMs || 15000);
+        try {
+          var opts = Object.assign({}, options || {}, { signal: controller.signal });
+          var res = await fetch(url, opts);
+          clearTimeout(timer);
+          return res;
+        } catch (e) {
+          clearTimeout(timer);
+          lastErr = e;
+          if (attempt >= maxRetries) throw e;
+        }
+      }
+      throw lastErr || new Error('Fetch fehlgeschlagen');
+    }
+
+    function collectSyncPayload() {
+      return {
+        version: S.version || 1,
+        exported: new Date().toISOString(),
+        app: 'Weekly Review Orchestrator',
+        S: deepClone(S)
+      };
+    }
+
+    function parseRemotePayload(text) {
+      var parsed = JSON.parse(text);
+      if (parsed && parsed.S) return parsed;
+      if (parsed && parsed.sessions) {
+        return {
+          version: parsed.version || 1,
+          exported: parsed._lastExported || new Date().toISOString(),
+          app: 'Weekly Review Orchestrator',
+          S: parsed
+        };
+      }
+      throw new Error('Ungültiges Sync-JSON');
+    }
+
+    function getRemoteFileFromResponse(json) {
+      var file = json && json.files && json.files[GIST_FILE];
+      if (!file) throw new Error('Datei "' + GIST_FILE + '" nicht im Gist gefunden');
+      return file;
+    }
+
+    async function gistGetRemotePayload(token, gistId) {
+      var res = await fetchWithTimeoutRetry(GIST_API_ROOT + encodeURIComponent(gistId), {
+        headers: githubHeaders(token)
+      }, 15000, 1);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var json = await res.json();
+      var file = getRemoteFileFromResponse(json);
+      return {
+        raw: json,
+        file: file,
+        payload: parseRemotePayload(file.content)
+      };
+    }
+
+    function tsValue(value) {
+      var t = Date.parse(value || '');
+      return isNaN(t) ? 0 : t;
+    }
+
+    function newerIso(a, b) {
+      return tsValue(a) >= tsValue(b) ? (a || b || new Date().toISOString()) : (b || a || new Date().toISOString());
+    }
+
+    function applySyncPayload(payload) {
+      if (!payload || !payload.S) throw new Error('Sync-Payload ohne State');
+      S = deepClone(payload.S);
+      if (!Array.isArray(S.sessions)) S.sessions = [];
+      if (!S.currentTab) S.currentTab = 'dashboard';
+      if (!S.sessions.length) {
+        var first = blankSession();
+        S.sessions = [first];
+        S.currentSessionId = first.id;
+      }
+      if (!getSession()) S.currentSessionId = S.sessions[0].id;
+      normalizeState();
+      S._lastExported = payload.exported || S._lastExported || new Date().toISOString();
+      save(true, true, true);
+      renderAll();
+    }
+
+    function sessionComparable(session) {
+      var c = deepClone(session);
+      delete c.updatedAt;
+      delete c.createdAt;
+      return JSON.stringify(c);
+    }
+
+    function newerSession(a, b) {
+      var aTs = tsValue((a && (a.updatedAt || a.createdAt)) || '');
+      var bTs = tsValue((b && (b.updatedAt || b.createdAt)) || '');
+      return aTs >= bTs ? deepClone(a) : deepClone(b);
+    }
+
+    function mergeStates(localState, remoteState) {
+      var merged = {
+        version: Math.max((localState && localState.version) || 1, (remoteState && remoteState.version) || 1),
+        currentTab: (localState && localState.currentTab) || (remoteState && remoteState.currentTab) || 'dashboard',
+        currentSessionId: (localState && localState.currentSessionId) || (remoteState && remoteState.currentSessionId) || '',
+        sessions: [],
+        _lastExported: newerIso((localState && localState._lastExported) || '', (remoteState && remoteState._lastExported) || '')
+      };
+
+      var sessionMap = {};
+      (localState.sessions || []).forEach(function (session) {
+        if (session && session.id) sessionMap[session.id] = deepClone(session);
+      });
+
+      (remoteState.sessions || []).forEach(function (remoteSession) {
+        if (!remoteSession || !remoteSession.id) return;
+        var existing = sessionMap[remoteSession.id];
+        if (!existing) {
+          sessionMap[remoteSession.id] = deepClone(remoteSession);
+          return;
+        }
+        if (sessionComparable(existing) === sessionComparable(remoteSession)) {
+          sessionMap[remoteSession.id] = newerSession(existing, remoteSession);
+          return;
+        }
+        var newer = newerSession(existing, remoteSession);
+        var newerIsExisting = sessionComparable(newer) === sessionComparable(existing);
+        var older = newerIsExisting ? deepClone(remoteSession) : deepClone(existing);
+        sessionMap[remoteSession.id] = newer;
+        var conflict = deepClone(older);
+        conflict.id = uid();
+        conflict.weekLabel = (conflict.weekLabel || 'Session') + ' (Konfliktkopie)';
+        conflict.updatedAt = new Date().toISOString();
+        sessionMap[conflict.id] = conflict;
+      });
+
+      merged.sessions = Object.keys(sessionMap).map(function (key) {
+        return sessionMap[key];
+      }).sort(function (a, b) {
+        return tsValue((b && (b.updatedAt || b.createdAt)) || '') - tsValue((a && (a.updatedAt || a.createdAt)) || '');
+      });
+
+      if (!merged.sessions.length) {
+        var first = blankSession();
+        merged.sessions = [first];
+        merged.currentSessionId = first.id;
+      } else if (!merged.sessions.find(function (session) { return session.id === merged.currentSessionId; })) {
+        merged.currentSessionId = merged.sessions[0].id;
+      }
+
+      return merged;
+    }
+
+    function gistAutoSyncDebounced() {
+      clearTimeout(autoSyncTimer);
+      if (!hasGistConfig()) return;
+      autoSyncTimer = setTimeout(function () {
+        gistPush(true, false).catch(function (err) {
+          console.warn('[Gist Auto Sync]', err);
+        });
+      }, AUTO_SYNC_DELAY);
+    }
+
+    async function gistPush(silent, force) {
+      var cfg = getGistConfig();
+      if (!cfg.token || !cfg.gistId) {
+        var missingMsg = 'Gist-Konfiguration fehlt';
+        if (!silent) toast(missingMsg);
+        throw new Error(missingMsg);
+      }
+
+      var payload = collectSyncPayload();
+
+      if (!force) {
+        try {
+          var remote = await gistGetRemotePayload(cfg.token, cfg.gistId);
+          var remoteTs = tsValue((remote.payload && (remote.payload.exported || (remote.payload.S && remote.payload.S._lastExported))) || '');
+          var localTs = tsValue(payload.exported);
+          if (remoteTs > localTs) {
+            var msg = 'Cloud-Stand ist neuer. Nutze Merge oder Herunterladen.';
+            if (!silent) alert(msg);
+            throw new Error(msg);
+          }
+        } catch (e) {
+          var text = String((e && e.message) || e || '');
+          if (text.indexOf('Cloud-Stand ist neuer') !== -1) throw e;
+          if (text.indexOf('Datei "' + GIST_FILE + '" nicht im Gist gefunden') === -1) {
+            console.warn('[Gist Push] Versionscheck übersprungen:', e);
+          }
+        }
+      }
+
+      var files = {};
+      files[GIST_FILE] = { content: JSON.stringify(payload, null, 2) };
+
+      var res = await fetchWithTimeoutRetry(GIST_API_ROOT + encodeURIComponent(cfg.gistId), {
+        method: 'PATCH',
+        headers: githubHeaders(cfg.token, true),
+        body: JSON.stringify({ files: files })
+      }, 15000, 1);
+
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+
+      S._lastExported = payload.exported;
+      save(true, true, true);
+      if (!silent) toast('In Gist gespeichert');
+      return true;
+    }
+
+    async function gistPull() {
+      var cfg = getGistConfig();
+      if (!cfg.token || !cfg.gistId) {
+        toast('Bitte erst Token und Gist-ID eintragen');
+        return;
+      }
+      try {
+        var remote = await gistGetRemotePayload(cfg.token, cfg.gistId);
+        var remoteTs = tsValue((remote.payload && (remote.payload.exported || (remote.payload.S && remote.payload.S._lastExported))) || '');
+        var localTs = tsValue(S._lastExported || '');
+        if (localTs > remoteTs) {
+          var ok = confirm('Lokal ist neuer als Cloud. Wirklich aus dem Gist laden und lokal überschreiben?');
+          if (!ok) return;
+        }
+        applySyncPayload(remote.payload);
+        toast('Cloud-Stand geladen');
+      } catch (e) {
+        alert('Fehler beim Laden aus dem Gist: ' + ((e && e.message) || e));
+      }
+    }
+
+    async function mergeFromGist() {
+      var cfg = getGistConfig();
+      if (!cfg.token || !cfg.gistId) {
+        toast('Bitte erst Token und Gist-ID eintragen');
+        return;
+      }
+
+      var getRes, remotePayload, mergedState;
+
+      try {
+        getRes = await fetchWithTimeoutRetry(GIST_API_ROOT + encodeURIComponent(cfg.gistId), {
+          headers: githubHeaders(cfg.token)
+        }, 15000, 1);
+        if (!getRes.ok) throw new Error('HTTP ' + getRes.status);
+      } catch (e) {
+        console.error('[Merge] Schritt 1 – GET fehlgeschlagen:', e);
+        alert('Netzwerkfehler beim Abrufen des Gist (Schritt 1): ' + ((e && e.message) || e));
+        return;
+      }
+
+      try {
+        var json = await getRes.json();
+        var file = getRemoteFileFromResponse(json);
+        remotePayload = parseRemotePayload(file.content);
+      } catch (e) {
+        console.error('[Merge] Schritt 2 – JSON-Parse fehlgeschlagen:', e);
+        alert('Fehler beim Lesen des Cloud-JSON (Schritt 2): ' + ((e && e.message) || e));
+        return;
+      }
+
+      try {
+        mergedState = mergeStates(S, remotePayload.S || {});
+      } catch (e) {
+        console.error('[Merge] Schritt 3 – Lokaler Merge-Fehler:', e);
+        alert('Lokaler Merge-Fehler (Schritt 3): ' + ((e && e.message) || e));
+        return;
+      }
+
+      try {
+        var mergedPayload = {
+          version: mergedState.version || 1,
+          exported: new Date().toISOString(),
+          app: 'Weekly Review Orchestrator',
+          S: mergedState
+        };
+        var files = {};
+        files[GIST_FILE] = { content: JSON.stringify(mergedPayload, null, 2) };
+        var writeRes = await fetchWithTimeoutRetry(GIST_API_ROOT + encodeURIComponent(cfg.gistId), {
+          method: 'PATCH',
+          headers: githubHeaders(cfg.token, true),
+          body: JSON.stringify({ files: files })
+        }, 15000, 1);
+        if (!writeRes.ok) throw new Error('HTTP ' + writeRes.status);
+        S = mergedState;
+        S._lastExported = mergedPayload.exported;
+        normalizeState();
+        save(true, true, true);
+        renderAll();
+        toast('Merge abgeschlossen');
+      } catch (e) {
+        console.error('[Merge] Schritt 4 – PATCH fehlgeschlagen:', e);
+        alert('Merge lokal OK, aber Cloud-Write fehlgeschlagen (Schritt 4): ' + ((e && e.message) || e));
+      }
+    }
+
+    async function gistSyncOnStart() {
+      if (hasTriedStartupSync) return;
+      hasTriedStartupSync = true;
+      if (!hasGistConfig()) return;
+      try {
+        var cfg = getGistConfig();
+        var remote = await gistGetRemotePayload(cfg.token, cfg.gistId);
+        var remoteTs = tsValue((remote.payload && (remote.payload.exported || (remote.payload.S && remote.payload.S._lastExported))) || '');
+        var localTs = tsValue(S._lastExported || '');
+        if (remoteTs > localTs) {
+          applySyncPayload(remote.payload);
+          toast('Neuerer Cloud-Stand geladen');
+        }
+      } catch (e) {
+        console.warn('[Gist Sync Start]', e);
+      }
+    }
+
     function exportJSON() {
       var session = getSession();
       if (!session) return;
@@ -1360,11 +1796,12 @@
       document.getElementById('panel-prompts').innerHTML = promptsHTML(session);
       document.getElementById('panel-data').innerHTML = dataHTML(session);
       document.getElementById('panel-export').innerHTML = exportHTML(session);
-      switchTab(S.currentTab || 'dashboard');
+      switchTab(S.currentTab || 'dashboard', true);
     }
 
     load();
     renderAll();
+    gistSyncOnStart();
   </script>
 </body>
 </html>
