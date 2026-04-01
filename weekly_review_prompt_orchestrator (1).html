@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Weekly Review Orchestrator</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --bg-mid: #16213e;
+      --surface: #1e2a4a;
+      --surface-2: #162038;
+      --surface-3: #243555;
+      --border: #2a4a7f;
+      --border-light: #3a6aaf;
+      --ink: #e8e8f0;
+      --ink-light: #9999bb;
+      --ink-dim: #555577;
+      --gold: #ffb347;
+      --gold-light: #ffd580;
+      --purple: #9b59b6;
+      --purple-light: #c39bd3;
+      --purple-dark: #7d3c98;
+      --green: #2ecc71;
+      --green-dark: #1a8a4a;
+      --red: #e74c3c;
+      --red-dark: #c0392b;
+      --blue: #3498db;
+      --blue-dark: #2176ae;
+      --teal: #1abc9c;
+      --teal-dark: #16a085;
+      --shadow: 0 8px 30px rgba(0,0,0,.35);
+      --radius: 12px;
+      --touch-min: 44px;
+      --fs-content: 16px;
+      --fs-btn: 13px;
+      --fs-label: 11px;
+      --pixel: monospace;
+      --body: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      background-image:
+        radial-gradient(ellipse at 20% 20%, rgba(155,89,182,0.09) 0%, transparent 45%),
+        radial-gradient(ellipse at 85% 15%, rgba(52,152,219,0.08) 0%, transparent 40%),
+        radial-gradient(ellipse at 50% 85%, rgba(255,179,71,0.06) 0%, transparent 35%);
+      color: var(--ink);
+      font-family: var(--body);
+      font-size: var(--fs-content);
+      min-height: 100vh;
+    }
+
+    #app {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 14px;
+    }
+
+    .htbox {
+      background: linear-gradient(135deg, #2d1b69, #1a0a4a);
+      border: 2px solid var(--purple);
+      box-shadow: 0 0 20px rgba(155,89,182,0.25);
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+
+    .htbox h1 {
+      margin: 0 0 8px 0;
+      color: var(--gold);
+      font-size: 18px;
+      letter-spacing: 0.4px;
+    }
+
+    .sub {
+      color: var(--ink-light);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    .top-meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .meta-card,
+    .qs {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      border-radius: var(--radius);
+    }
+
+    .meta-card {
+      padding: 12px 14px;
+    }
+
+    .meta-k {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--ink-light);
+      margin-bottom: 6px;
+      font-weight: 700;
+    }
+
+    .meta-v {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--gold);
+    }
+
+    .tab-row {
+      display: flex;
+      gap: 2px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      flex-wrap: nowrap;
+      background: rgba(0,0,0,.26);
+      border-radius: 10px 10px 0 0;
+      padding: 4px 4px 0;
+      margin-top: 14px;
+    }
+    .tab-row::-webkit-scrollbar { display: none; }
+
+    .tab-btn {
+      font-family: var(--body);
+      font-weight: 700;
+      font-size: 13px;
+      padding: 12px 14px;
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: var(--ink-light);
+      white-space: nowrap;
+      flex-shrink: 0;
+      min-height: var(--touch-min);
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      color: var(--gold);
+      border-bottom-color: var(--gold);
+    }
+
+    .panel-wrap {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 24px rgba(0,0,0,.4);
+      padding: 16px;
+      min-height: 340px;
+      border-radius: 0 0 10px 10px;
+    }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 14px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .qh {
+      font-weight: 800;
+      font-size: 13px;
+      color: var(--gold);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .qs { padding: 14px 16px; margin-bottom: 14px; }
+
+    .notice {
+      background: rgba(255,179,71,.08);
+      border-left: 3px solid var(--gold);
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--ink-light);
+      line-height: 1.6;
+      border-radius: 0 6px 6px 0;
+      margin-bottom: 12px;
+    }
+
+    .notice.info { background: rgba(52,152,219,.08); border-left-color: var(--blue); }
+    .notice.success { background: rgba(46,204,113,.08); border-left-color: var(--green); }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .btn {
+      font-family: var(--body);
+      font-weight: 700;
+      font-size: var(--fs-btn);
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      min-height: var(--touch-min);
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+    }
+
+    .btn-q { background: linear-gradient(135deg, var(--gold), #e8960a); color: #1a0a00; }
+    .btn-m { background: linear-gradient(135deg, var(--purple), var(--purple-dark)); color: white; }
+    .btn-v { background: linear-gradient(135deg, var(--green), var(--green-dark)); color: white; }
+    .btn-s { background: linear-gradient(135deg, var(--blue), var(--blue-dark)); color: white; }
+    .btn-t { background: linear-gradient(135deg, var(--teal), var(--teal-dark)); color: white; }
+    .btn-d { background: linear-gradient(135deg, var(--red), var(--red-dark)); color: white; }
+    .btn:disabled { opacity: .42; cursor: not-allowed; }
+
+    input, textarea, select {
+      width: 100%;
+      background: rgba(0,0,0,.24);
+      border: 1px solid var(--border);
+      color: var(--ink);
+      font-family: var(--body);
+      font-size: var(--fs-content);
+      padding: 10px 12px;
+      min-height: var(--touch-min);
+      border-radius: 8px;
+    }
+
+    textarea { resize: vertical; min-height: 120px; }
+    textarea.compact { min-height: 84px; }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--purple);
+      box-shadow: 0 0 0 2px rgba(155,89,182,.18);
+    }
+
+    label {
+      display: block;
+      margin: 12px 0 6px 0;
+      font-size: var(--fs-label);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .55px;
+      color: var(--ink-light);
+    }
+
+    .step-list { display: grid; gap: 12px; }
+
+    .step-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .step-head {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .step-title {
+      font-weight: 800;
+      font-size: 18px;
+      color: var(--ink);
+      line-height: 1.35;
+      margin-bottom: 4px;
+    }
+
+    .step-sub {
+      color: var(--ink-light);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 32px;
+      border-radius: 999px;
+      padding: 0 11px;
+      border: 1px solid var(--border);
+      color: var(--ink-light);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      background: rgba(0,0,0,.18);
+    }
+
+    .step-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .step-meta {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 10px;
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--ink-light);
+      margin-top: 10px;
+    }
+
+    .check-row input[type="checkbox"] {
+      width: 20px;
+      min-height: 20px;
+      height: 20px;
+      accent-color: var(--green);
+    }
+
+    .progress {
+      height: 12px;
+      background: rgba(0,0,0,.28);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--gold), var(--teal));
+      transition: width .2s ease;
+    }
+
+    .prompt-output {
+      min-height: 360px;
+      white-space: pre-wrap;
+      line-height: 1.6;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: rgba(0,0,0,.22);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      overflow: auto;
+    }
+
+    .small {
+      font-size: 12px;
+      color: var(--ink-light);
+      line-height: 1.55;
+    }
+
+    .session-list {
+      display: grid;
+      gap: 10px;
+      max-height: 360px;
+      overflow: auto;
+    }
+
+    .session-item {
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,.2);
+      cursor: pointer;
+    }
+
+    .session-item.active {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 1px rgba(255,179,71,.25) inset;
+    }
+
+    .session-item strong { display: block; margin-bottom: 6px; }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 8px;
+      font-size: 14px;
+      line-height: 1.55;
+      margin-bottom: 8px;
+    }
+
+    .kv .k { color: var(--ink-light); font-weight: 700; }
+
+    .table-lite {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .table-lite th,
+    .table-lite td {
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      padding: 10px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .table-lite th {
+      color: var(--gold);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .tag {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 800;
+      color: white;
+      background: var(--purple-dark);
+      border: 1px solid var(--purple);
+      border-radius: 999px;
+      padding: 4px 9px;
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+
+    #toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      background: var(--surface);
+      border: 1px solid var(--purple);
+      color: var(--gold);
+      padding: 12px 16px;
+      border-radius: 10px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.45);
+      transform: translateY(90px);
+      opacity: 0;
+      transition: all .2s ease;
+      z-index: 999;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    #toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 980px) {
+      .grid-2, .grid-3, .top-meta, .step-meta {
+        grid-template-columns: 1fr;
+      }
+      .step-head {
+        grid-template-columns: 1fr;
+      }
+      .kv {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="htbox">
+      <h1>Weekly Review Orchestrator</h1>
+      <div class="sub">
+        Leit-App für deinen Weekly-Review-Ablauf mit Prompt-Weitergabe. Sie bildet den groben Neurolist-Flow ab,
+        hält Session-Daten lokal fest und generiert dir pro Schritt kopierbare GPT-Prompts.
+      </div>
+      <div class="top-meta">
+        <div class="meta-card">
+          <div class="meta-k">Aktive Woche</div>
+          <div class="meta-v" id="metaWeek">—</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-k">Fortschritt</div>
+          <div class="meta-v" id="metaProgress">0 / 7</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-k">Offene Minuten</div>
+          <div class="meta-v" id="metaMinutes">100</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-k">Zuletzt gespeichert</div>
+          <div class="meta-v" id="metaSaved" style="font-size:14px;color:var(--ink)">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-row" id="tabRow"></div>
+    <div class="panel-wrap">
+      <section class="panel active" id="panel-dashboard"></section>
+      <section class="panel" id="panel-steps"></section>
+      <section class="panel" id="panel-prompts"></section>
+      <section class="panel" id="panel-data"></section>
+      <section class="panel" id="panel-export"></section>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    var LKEY = 'weekly_review_orchestrator_v1';
+
+    var TABS = [
+      { id: 'dashboard', label: 'Dashboard' },
+      { id: 'steps', label: 'Schritte' },
+      { id: 'prompts', label: 'Prompt Studio' },
+      { id: 'data', label: 'Session-Daten' },
+      { id: 'export', label: 'Export' }
+    ];
+
+    var DEFAULT_STEPS = [
+      {
+        id: 'finish_daily_notes',
+        title: 'Letzte Daily Notes fertigstellen',
+        minutes: 20,
+        icon: '🧾',
+        summary: 'Die Rohbasis schließen, bevor du in Konvertierung und Review gehst.',
+        purpose: 'Stellt sicher, dass deine Wochenbasis vollständig ist und die Review nicht auf halben Notizen läuft.',
+        promptType: 'finishDailyNotes'
+      },
+      {
+        id: 'convert_days',
+        title: 'Tage der Woche aus dem Bullet Journal in ChatGPT umwandeln (für Obsidian-Format)',
+        minutes: 15,
+        icon: '↩️',
+        summary: 'Tagesblöcke in ein strukturiertes, weiterverarbeitbares Format überführen.',
+        purpose: 'Erzeugt sauberere Eingaben für Annotationen, spätere Review und Obsidian-Weiterverarbeitung.',
+        promptType: 'convertDays'
+      },
+      {
+        id: 'review_days_new_format',
+        title: 'Tage der Woche im neuen Format überfliegen und Anmerkungen diktieren',
+        minutes: 15,
+        icon: '🎤',
+        summary: 'Erste Muster, Lücken, Beobachtungen und Zusatzgedanken festhalten.',
+        purpose: 'Bringt deine zweite Verarbeitungsschicht rein, bevor die eigentliche Weekly Review startet.',
+        promptType: 'reviewAnnotations'
+      },
+      {
+        id: 'save_quant_data',
+        title: 'Quantitative Daten speichern (für Auswertung)',
+        minutes: 10,
+        icon: '💾',
+        summary: 'Stimmungs-, Zeit-, Habit- und Bewegungsdaten als Wocheninput sichern.',
+        purpose: 'Schafft die optionale Datengrundlage für Mustererkennung über dein Erleben hinaus.',
+        promptType: 'quantData'
+      },
+      {
+        id: 'migrate_tasks',
+        title: 'Aufgaben aus dem Bullet Journal migrieren',
+        minutes: 15,
+        icon: '➡️',
+        summary: 'Offene Aufgaben in ein klares Folgesystem übertragen.',
+        purpose: 'Verhindert, dass die Review endet und lose offene Fäden im Bullet Journal hängen bleiben.',
+        promptType: 'migrateTasks'
+      },
+      {
+        id: 'open_last_weekly_log',
+        title: 'Weekly Log Chat öffnen (letzte Woche) für Prompts und Schritt-für-Schritt-Anleitung',
+        minutes: 5,
+        icon: '💬',
+        summary: 'Alten Weekly-Log-Kontext und Review-Regeln wieder in Reichweite bringen.',
+        purpose: 'Holt den Review-Workflow mit seinen Betriebsmodi, Eingaberegeln und Promptstrukturen wieder nach vorn.',
+        promptType: 'openLastWeeklyLog'
+      },
+      {
+        id: 'write_current_weekly_review',
+        title: 'Aktuelle Weekly Review im Weekly Log Chat schreiben',
+        minutes: 20,
+        icon: '🖊️',
+        summary: 'Die eigentliche Weekly Review auf Basis aller vorbereiteten Inputs starten.',
+        purpose: 'Jetzt wird aus Material eine vollständige Review mit klarer Trennung von Beobachtung, Interpretation und Entscheidung.',
+        promptType: 'startWeeklyReview'
+      }
+    ];
+
+    var S = {
+      version: 1,
+      currentTab: 'dashboard',
+      currentSessionId: '',
+      sessions: []
+    };
+
+    function uid() {
+      return String(Date.now()) + String(Math.random()).slice(2, 8);
+    }
+
+    function today() {
+      return new Date().toISOString().split('T')[0];
+    }
+
+    function todayDE() {
+      return new Date().toLocaleDateString('de-DE');
+    }
+
+    function esc(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function toast(msg) {
+      var t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(function () { t.classList.remove('show'); }, 2200);
+    }
+
+    function blankSession() {
+      var steps = DEFAULT_STEPS.map(function (step) {
+        return {
+          id: step.id,
+          done: false,
+          notes: '',
+          artifacts: '',
+          promptNotes: ''
+        };
+      });
+      return {
+        id: uid(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        weekLabel: 'KW ' + guessWeekLabel(),
+        reviewDate: today(),
+        lastWeeklyLogUrl: '',
+        targetChat: 'Weekly Log Chat',
+        currentFocus: '',
+        weeklyIntent: '',
+        dailyNotesRaw: '',
+        bulletJournalRaw: '',
+        convertedDays: '',
+        annotations: '',
+        quantData: '',
+        migratedTasks: '',
+        previousWeeklyLogSummary: '',
+        reviewResult: '',
+        nextWeekPreview: '',
+        steps: steps,
+        promptHistory: []
+      };
+    }
+
+    function guessWeekLabel() {
+      var d = new Date();
+      d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+      d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+      var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+      var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+      return weekNo + ' – ' + d.getUTCFullYear();
+    }
+
+    function load() {
+      try {
+        var raw = localStorage.getItem(LKEY);
+        if (raw) S = JSON.parse(raw);
+      } catch (e) {}
+      if (!Array.isArray(S.sessions)) S.sessions = [];
+      if (!S.currentTab) S.currentTab = 'dashboard';
+      if (!S.sessions.length) {
+        var first = blankSession();
+        S.sessions.push(first);
+        S.currentSessionId = first.id;
+      }
+      if (!getSession()) {
+        S.currentSessionId = S.sessions[0].id;
+      }
+      normalizeState();
+    }
+
+    function normalizeState() {
+      S.sessions.forEach(function (session) {
+        if (!session.steps || !session.steps.length) {
+          session.steps = blankSession().steps;
+        }
+        DEFAULT_STEPS.forEach(function (def) {
+          var existing = session.steps.find(function (s) { return s.id === def.id; });
+          if (!existing) session.steps.push({ id: def.id, done: false, notes: '', artifacts: '', promptNotes: '' });
+        });
+        session.updatedAt = session.updatedAt || session.createdAt || new Date().toISOString();
+      });
+    }
+
+    function save() {
+      var session = getSession();
+      if (session) session.updatedAt = new Date().toISOString();
+      try {
+        localStorage.setItem(LKEY, JSON.stringify(S));
+      } catch (e) {}
+      updateMeta();
+    }
+
+    function getSession() {
+      return S.sessions.find(function (s) { return s.id === S.currentSessionId; }) || null;
+    }
+
+    function getStepData(stepId) {
+      var session = getSession();
+      if (!session) return null;
+      return session.steps.find(function (s) { return s.id === stepId; }) || null;
+    }
+
+    function switchTab(tabId) {
+      S.currentTab = tabId;
+      document.querySelectorAll('.tab-btn').forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.tab === tabId);
+      });
+      document.querySelectorAll('.panel').forEach(function (panel) {
+        panel.classList.toggle('active', panel.id === 'panel-' + tabId);
+      });
+      save();
+    }
+
+    function renderTabs() {
+      var row = document.getElementById('tabRow');
+      row.innerHTML = TABS.map(function (tab) {
+        return '<button class="tab-btn ' + (tab.id === S.currentTab ? 'active' : '') + '" data-tab="' + tab.id + '" onclick="switchTab(\'' + tab.id + '\')">' + esc(tab.label) + '</button>';
+      }).join('');
+    }
+
+    function stepDefinition(stepId) {
+      return DEFAULT_STEPS.find(function (s) { return s.id === stepId; });
+    }
+
+    function completedCount(session) {
+      return session.steps.filter(function (s) { return s.done; }).length;
+    }
+
+    function remainingMinutes(session) {
+      var total = 0;
+      DEFAULT_STEPS.forEach(function (def) {
+        var st = session.steps.find(function (s) { return s.id === def.id; });
+        if (!st || !st.done) total += def.minutes;
+      });
+      return total;
+    }
+
+    function updateMeta() {
+      var session = getSession();
+      if (!session) return;
+      document.getElementById('metaWeek').textContent = session.weekLabel || '—';
+      document.getElementById('metaProgress').textContent = completedCount(session) + ' / ' + DEFAULT_STEPS.length;
+      document.getElementById('metaMinutes').textContent = String(remainingMinutes(session));
+      document.getElementById('metaSaved').textContent = session.updatedAt ? new Date(session.updatedAt).toLocaleString('de-DE') : '—';
+    }
+
+    function patchSession(field, value) {
+      var session = getSession();
+      if (!session) return;
+      session[field] = value;
+      save();
+      renderAll();
+    }
+
+    function patchStep(stepId, field, value) {
+      var st = getStepData(stepId);
+      if (!st) return;
+      st[field] = value;
+      save();
+      renderAll();
+    }
+
+    function newSession() {
+      var s = blankSession();
+      S.sessions.unshift(s);
+      S.currentSessionId = s.id;
+      save();
+      renderAll();
+      toast('Neue Weekly-Review-Session angelegt');
+    }
+
+    function deleteSession() {
+      if (S.sessions.length <= 1) {
+        toast('Mindestens eine Session muss bleiben');
+        return;
+      }
+      var session = getSession();
+      if (!session) return;
+      var ok = confirm('Aktive Session wirklich löschen?');
+      if (!ok) return;
+      S.sessions = S.sessions.filter(function (s) { return s.id !== session.id; });
+      S.currentSessionId = S.sessions[0].id;
+      save();
+      renderAll();
+      toast('Session gelöscht');
+    }
+
+    function duplicateSession() {
+      var session = getSession();
+      if (!session) return;
+      var copy = JSON.parse(JSON.stringify(session));
+      copy.id = uid();
+      copy.createdAt = new Date().toISOString();
+      copy.updatedAt = new Date().toISOString();
+      copy.weekLabel = session.weekLabel + ' (Kopie)';
+      S.sessions.unshift(copy);
+      S.currentSessionId = copy.id;
+      save();
+      renderAll();
+      toast('Session dupliziert');
+    }
+
+    function switchSession(id) {
+      S.currentSessionId = id;
+      save();
+      renderAll();
+    }
+
+    function dashboardHTML(session) {
+      var progress = Math.round((completedCount(session) / DEFAULT_STEPS.length) * 100);
+      var nextOpen = DEFAULT_STEPS.find(function (def) {
+        var step = session.steps.find(function (s) { return s.id === def.id; });
+        return !step || !step.done;
+      });
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Wochensession</div>\n              <div class="notice">Hier steuerst du die Review wie in deinem Neurolist-Ablauf: erst Material schließen, dann strukturieren, dann den Weekly-Log-Chat mit dem eigentlichen Review anwerfen.</div>\n              <label>Wochenlabel</label>\n              <input value="' + esc(session.weekLabel) + '" onchange="patchSession(\'weekLabel\', this.value)" placeholder="z. B. KW 14 – 2026" />\n              <label>Review-Datum</label>\n              <input type="date" value="' + esc(session.reviewDate || today()) + '" onchange="patchSession(\'reviewDate\', this.value)" />\n              <label>Letzter Weekly-Log-Chat / URL</label>\n              <input value="' + esc(session.lastWeeklyLogUrl) + '" onchange="patchSession(\'lastWeeklyLogUrl\', this.value)" placeholder="https://chatgpt.com/..." />\n              <label>Aktueller Fokus dieser Review</label>\n              <textarea class="compact" onchange="patchSession(\'currentFocus\', this.value)" placeholder="Was soll diese Review diesmal besonders klären?">' + esc(session.currentFocus) + '</textarea>\n              <label>Wöchentliche Intention</label>\n              <textarea class="compact" onchange="patchSession(\'weeklyIntent\', this.value)" placeholder="Wofür machst du diese Weekly Review konkret?">' + esc(session.weeklyIntent) + '</textarea>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Fortschritt</div>\n              <div class="small">' + completedCount(session) + ' von ' + DEFAULT_STEPS.length + ' Schritten erledigt. Offene Minuten: ' + remainingMinutes(session) + '.</div>\n              <div class="progress"><div class="progress-fill" style="width:' + progress + '%"></div></div>\n              <div class="small" style="margin-top:10px">Nächster offener Schritt: <strong>' + esc(nextOpen ? nextOpen.title : 'Alles erledigt') + '</strong></div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="switchTab(\'steps\')">Zur Schrittliste</button>\n                <button class="btn btn-m" onclick="switchTab(\'prompts\')">Zum Prompt Studio</button>\n              </div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Session-Aktionen</div>\n              <div class="btn-row">\n                <button class="btn btn-v" onclick="newSession()">Neue Session</button>\n                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>\n                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>\n              </div>\n              <div class="small" style="margin-top:12px">Du kannst Wochen getrennt als Sessions führen. Alles wird lokal gespeichert.</div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Review-Logik kompakt</div>\n              <table class="table-lite">\n                <tr><th>Phase</th><th>Ziel</th></tr>\n                <tr><td>Vorbereitung</td><td>Daily Notes schließen, Tage umformen, Annotationen diktieren.</td></tr>\n                <tr><td>Datenbasis</td><td>Quantitative Daten und migrierte Aufgaben festhalten.</td></tr>\n                <tr><td>Weekly Log</td><td>Letzten Weekly-Log-Kontext öffnen und Review mit klarer Input-Reihenfolge starten.</td></tr>\n                <tr><td>Review</td><td>Beobachtung, Interpretation und Entscheidung sauber trennen.</td></tr>\n              </table>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktive Sessions</div>\n              <div class="session-list">' + sessionListHTML() + '</div>\n            </div>\n          </div>\n        </div>\n      ';
+    }
+
+    function sessionListHTML() {
+      return S.sessions.map(function (session) {
+        var active = session.id === S.currentSessionId ? 'active' : '';
+        return '<div class="session-item ' + active + '" onclick="switchSession(\'' + session.id + '\')">' +
+          '<strong>' + esc(session.weekLabel || 'Ohne Titel') + '</strong>' +
+          '<div class="small">' + completedCount(session) + ' / ' + DEFAULT_STEPS.length + ' erledigt · ' + remainingMinutes(session) + ' Min offen</div>' +
+          '<div class="small">Zuletzt: ' + esc(new Date(session.updatedAt).toLocaleString('de-DE')) + '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    function stepsHTML(session) {
+      return '<div class="notice info">Jeder Schritt hat einen eigenen Prompt-Button. Du kannst dir dadurch genau den Text erzeugen lassen, den du im passenden GPT-Chat weitergibst.</div>' +
+        '<div class="step-list">' +
+        DEFAULT_STEPS.map(function (def) {
+          var st = session.steps.find(function (s) { return s.id === def.id; }) || { done: false, notes: '', artifacts: '', promptNotes: '' };
+          return '<div class="step-card">' +
+            '<div class="step-head">' +
+              '<div>' +
+                '<div class="step-title">' + esc(def.icon + ' ' + def.title) + '</div>' +
+                '<div class="step-sub">' + esc(def.summary) + '</div>' +
+              '</div>' +
+              '<div class="pill">' + def.minutes + ' Min.</div>' +
+              '<div class="pill">' + esc(st.done ? 'Erledigt' : 'Offen') + '</div>' +
+            '</div>' +
+            '<div class="small" style="margin-top:10px"><strong>Zweck:</strong> ' + esc(def.purpose) + '</div>' +
+            '<div class="check-row"><input type="checkbox" ' + (st.done ? 'checked' : '') + ' onchange="patchStep(\'' + def.id + '\', \'done\', this.checked)" /><span>Als erledigt markieren</span></div>' +
+            '<div class="step-meta">' +
+              '<div>' +
+                '<label>Eigene Notizen zum Schritt</label>' +
+                '<textarea class="compact" onchange="patchStep(\'' + def.id + '\', \'notes\', this.value)" placeholder="Was ist hier noch offen, worauf achten, was hat gehakt?">' + esc(st.notes) + '</textarea>' +
+              '</div>' +
+              '<div>' +
+                '<label>Artefakte / Ergebnis</label>' +
+                '<textarea class="compact" onchange="patchStep(\'' + def.id + '\', \'artifacts\', this.value)" placeholder="Welche Datei, welcher Chat, welcher Output ist hier entstanden?">' + esc(st.artifacts) + '</textarea>' +
+              '</div>' +
+            '</div>' +
+            '<label>Prompt-Zusatz für diesen Schritt</label>' +
+            '<textarea class="compact" onchange="patchStep(\'' + def.id + '\', \'promptNotes\', this.value)" placeholder="Spezielle Vorgaben, die in den Prompt rein sollen">' + esc(st.promptNotes) + '</textarea>' +
+            '<div class="step-actions">' +
+              '<button class="btn btn-q" onclick="buildPrompt(\'' + def.promptType + '\', true)">Prompt kopieren</button>' +
+              '<button class="btn btn-m" onclick="previewPrompt(\'' + def.promptType + '\')">Im Studio anzeigen</button>' +
+            '</div>' +
+          '</div>';
+        }).join('') +
+        '</div>';
+    }
+
+    function promptButtonsHTML() {
+      var groups = [
+        { id: 'weeklyLogSetup', label: 'Weekly-Log-Setup' },
+        { id: 'finishDailyNotes', label: 'Daily Notes finalisieren' },
+        { id: 'convertDays', label: 'Tage umwandeln' },
+        { id: 'reviewAnnotations', label: 'Annotationen diktieren' },
+        { id: 'quantData', label: 'Quant-Daten sichern' },
+        { id: 'migrateTasks', label: 'Aufgaben migrieren' },
+        { id: 'openLastWeeklyLog', label: 'Letzten Weekly Log öffnen' },
+        { id: 'startWeeklyReview', label: 'Weekly Review starten' },
+        { id: 'reviewSummary', label: 'Review zusammenfassen' }
+      ];
+      return groups.map(function (g) {
+        return '<button class="btn btn-s" onclick="previewPrompt(\'' + g.id + '\')">' + esc(g.label) + '</button>';
+      }).join('');
+    }
+
+    function promptsHTML(session) {
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Generator</div>\n              <div class="notice">Hier erzeugst du die Texte für den jeweiligen GPT-Chat. Die Inhalte greifen auf deine Session-Felder und Schritt-Notizen zu.</div>\n              <div class="btn-row">' + promptButtonsHTML() + '</div>\n              <label>Letzte Review-Zusammenfassung / Ergebnis</label>\n              <textarea onchange="patchSession(\'reviewResult\', this.value)" placeholder="Hier kannst du das Ergebnis der Weekly Review oder eine Zwischenfassung parken.">' + esc(session.reviewResult) + '</textarea>\n              <label>Nächste-Woche-Vorschau / Planung</label>\n              <textarea class="compact" onchange="patchSession(\'nextWeekPreview\', this.value)" placeholder="Deadlines, Fokus, erste Planungspunkte">' + esc(session.nextWeekPreview) + '</textarea>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Ausgabe</div>\n              <div class="prompt-output" id="promptOutput">Wähle links einen Prompt aus oder nutze in der Schrittliste einen der Copy-Buttons.</div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="copyPromptOutput()">Ausgabe kopieren</button>\n                <button class="btn btn-v" onclick="buildPrompt(\'startWeeklyReview\', true)">Review-Start sofort kopieren</button>\n              </div>\n            </div>\n          </div>\n        </div>\n      ';
+    }
+
+    function dataHTML(session) {
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Rohmaterial</div>\n              <label>Daily Notes dieser Woche</label>\n              <textarea onchange="patchSession(\'dailyNotesRaw\', this.value)" placeholder="Hier Rohtext, Dateiinhalt oder Sammelblock einfügen">' + esc(session.dailyNotesRaw) + '</textarea>\n              <label>Bullet-Journal-Rohmaterial / Tage der Woche</label>\n              <textarea onchange="patchSession(\'bulletJournalRaw\', this.value)" placeholder="Die Tage aus dem Bullet Journal, noch roh">' + esc(session.bulletJournalRaw) + '</textarea>\n              <label>Umgewandelte Tage / Obsidian-Format</label>\n              <textarea onchange="patchSession(\'convertedDays\', this.value)" placeholder="Hier kommt das neue strukturierte Format rein">' + esc(session.convertedDays) + '</textarea>\n              <label>Anmerkungen / diktierte Zusatzgedanken</label>\n              <textarea onchange="patchSession(\'annotations\', this.value)" placeholder="Muster, Ergänzungen, Korrekturen, Fokusstellen">' + esc(session.annotations) + '</textarea>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Ergänzende Daten</div>\n              <label>Quantitative Wochen-Daten</label>\n              <textarea onchange="patchSession(\'quantData\', this.value)" placeholder="Daylio, Toggl, Habits, Sport, Bewegung">' + esc(session.quantData) + '</textarea>\n              <label>Migrierte Aufgaben</label>\n              <textarea onchange="patchSession(\'migratedTasks\', this.value)" placeholder="Finale Aufgabenliste / Transferliste">' + esc(session.migratedTasks) + '</textarea>\n              <label>Zusammenfassung des letzten Weekly Logs</label>\n              <textarea onchange="patchSession(\'previousWeeklyLogSummary\', this.value)" placeholder="Wichtige Prompt-Regeln, relevante Erkenntnisse, Dinge die weitergeführt werden sollen">' + esc(session.previousWeeklyLogSummary) + '</textarea>\n              <div class="notice success">Tipp: Du musst hier nicht perfekt sauber arbeiten. Wichtig ist, dass die App genug Material hat, um daraus den jeweils passenden Prompt zu bauen.</div>\n            </div>\n          </div>\n        </div>\n      ';
+    }
+
+    function exportHTML(session) {
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">JSON / Markdown</div>\n              <div class="btn-row">\n                <button class="btn btn-q" onclick="exportJSON()">Session als JSON exportieren</button>\n                <button class="btn btn-s" onclick="exportMarkdown()">Session als Markdown exportieren</button>\n              </div>\n              <label>Import JSON</label>\n              <textarea class="compact" id="importBox" placeholder="Hier exportiertes JSON einfügen"></textarea>\n              <div class="btn-row" style="margin-top:10px">\n                <button class="btn btn-v" onclick="importJSON()">JSON importieren</button>\n                <button class="btn btn-d" onclick="resetCurrentSession()">Aktive Session zurücksetzen</button>\n              </div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktuelle Session kompakt</div>\n              <div class="kv"><div class="k">Wochenlabel</div><div>' + esc(session.weekLabel) + '</div></div>\n              <div class="kv"><div class="k">Review-Datum</div><div>' + esc(session.reviewDate) + '</div></div>\n              <div class="kv"><div class="k">Letzter Weekly Log</div><div>' + esc(session.lastWeeklyLogUrl || '—') + '</div></div>\n              <div class="kv"><div class="k">Aktueller Fokus</div><div>' + esc(session.currentFocus || '—') + '</div></div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Bausteine in dieser App</div>\n              <div class="tag">Weekly-Log-Setup</div>\n              <div class="tag">Daily-Notes-Abschluss</div>\n              <div class="tag">Obsidian-Umwandlung</div>\n              <div class="tag">Annotationsprompt</div>\n              <div class="tag">Quant-Daten</div>\n              <div class="tag">Migration</div>\n              <div class="tag">Review-Start</div>\n              <div class="tag">Review-Zusammenfassung</div>\n              <div class="notice info" style="margin-top:12px">Die App ruft kein Modell direkt auf. Sie ist bewusst als Prompt-Handoff-Werkzeug gebaut: Du generierst, kopierst und gibst die Prompts in den passenden Chat weiter.</div>\n            </div>\n          </div>\n        </div>\n      ';
+    }
+
+    function buildPrompt(type, copyDirectly) {
+      var session = getSession();
+      if (!session) return '';
+      var prompt = buildPromptText(type, session);
+      if (copyDirectly) {
+        navigator.clipboard.writeText(prompt).then(function () {
+          rememberPrompt(type, prompt);
+          toast('Prompt kopiert');
+        }).catch(function () {
+          rememberPrompt(type, prompt);
+          toast('Kopieren fehlgeschlagen');
+        });
+      }
+      return prompt;
+    }
+
+    function rememberPrompt(type, prompt) {
+      var session = getSession();
+      if (!session) return;
+      session.promptHistory.unshift({
+        id: uid(),
+        type: type,
+        createdAt: new Date().toISOString(),
+        prompt: prompt
+      });
+      session.promptHistory = session.promptHistory.slice(0, 12);
+      save();
+    }
+
+    function previewPrompt(type) {
+      var prompt = buildPromptText(type, getSession());
+      rememberPrompt(type, prompt);
+      document.getElementById('promptOutput').textContent = prompt;
+      switchTab('prompts');
+      toast('Prompt im Studio angezeigt');
+    }
+
+    function copyPromptOutput() {
+      var text = document.getElementById('promptOutput').textContent || '';
+      navigator.clipboard.writeText(text).then(function () {
+        toast('Ausgabe kopiert');
+      }).catch(function () {
+        toast('Kopieren fehlgeschlagen');
+      });
+    }
+
+    function sessionStepNotes(stepId) {
+      var st = getStepData(stepId);
+      if (!st) return '';
+      return [st.notes, st.promptNotes, st.artifacts].filter(Boolean).join('\n');
+    }
+
+    function buildPromptText(type, session) {
+      if (!session) return '';
+      var shared = [
+        'AKTIVE REVIEW-SESSION',
+        'Wochenlabel: ' + (session.weekLabel || '—'),
+        'Review-Datum: ' + (session.reviewDate || '—'),
+        'Aktueller Fokus: ' + (session.currentFocus || '—'),
+        'Wöchentliche Intention: ' + (session.weeklyIntent || '—'),
+        'Letzter Weekly-Log-Link: ' + (session.lastWeeklyLogUrl || '—')
+      ].join('\n');
+
+      if (type === 'weeklyLogSetup') {
+        return [
+          shared,
+          '',
+          'AUFGABE',
+          'Ich will diesen Chat als Weekly-Log- und Review-Chat nutzen.',
+          'Bitte arbeite in zwei klar getrennten Modi:',
+          '1. tagesbegleitender Wochenbriefing-Modus (Standard)',
+          '2. Weekly-Review-Modus (nur wenn ich explizit sage: "Starte die Weekly Review.")',
+          '',
+          'REGELN',
+          '- Arbeite nur mit den Inputs, die ich in diesem Chat sende.',
+          '- Starte keine Weekly Review ohne die nötigen Inputs.',
+          '- Wenn ich die Weekly Review starte, fordere nacheinander an:',
+          '  1. Daily Notes dieser Woche',
+          '  2. externe Wochen-Daten (optional: Stimmung / Daylio, Zeittracking / Toggl, Bewegung / Sport, Habits)',
+          '  3. letzten Weekly Log (falls vorhanden)',
+          '- Trenne in der Weekly Review strikt Beobachtung, Interpretation und Entscheidung.',
+          '- Stelle Rückfragen vor jeder Interpretation, wenn Inputs unklar oder lückenhaft sind.',
+          '',
+          'KONTEXT',
+          session.previousWeeklyLogSummary || 'Noch keine Zusammenfassung des letzten Weekly Logs hinterlegt.',
+          '',
+          'Bestätige danach nur knapp, dass du im Standardmodus bist und auf die erste passende Eingabe wartest.'
+        ].join('\n');
+      }
+
+      if (type === 'finishDailyNotes') {
+        return [
+          shared,
+          '',
+          'AUFGABE',
+          'Hilf mir, die letzten Daily Notes dieser Woche sauber fertigzustellen, ohne neue Fakten zu erfinden.',
+          '',
+          'INPUT',
+          session.dailyNotesRaw || 'Noch keine Daily Notes eingefügt.',
+          '',
+          'REGELN',
+          '- Arbeite nur mit dem, was im Input steht.',
+          '- Markiere Lücken, Unklarheiten oder halbfertige Stellen.',
+          '- Gib mir eine kompakte Liste: was ist vollständig, was ist unklar, was fehlt noch.',
+          '- Formuliere fehlende Ergänzungen als kurze Nachtragsfragen oder Abschlussimpulse.',
+          '- Keine Interpretation auf Wochenebene, nur Abschluss der Daily Notes.',
+          '',
+          'ZUSATZ',
+          sessionStepNotes('finish_daily_notes') || 'Kein Zusatz.',
+          '',
+          'AUSGABEFORMAT',
+          '1. Bereits vollständig',
+          '2. Noch offen',
+          '3. Direkte Nachtragsfragen',
+          '4. Minimaler nächster Schritt'
+        ].join('\n');
+      }
+
+      if (type === 'convertDays') {
+        return [
+          shared,
+          '',
+          'AUFGABE',
+          'Wandle meine Tage-der-Woche-Notizen aus dem Bullet Journal in ein sauberes Obsidian-kompatibles Format um.',
+          '',
+          'INPUT',
+          session.bulletJournalRaw || 'Noch kein Bullet-Journal-Rohmaterial eingefügt.',
+          '',
+          'REGELN',
+          '- Struktur pro Tag klar trennen.',
+          '- Keine neuen Inhalte erfinden.',
+          '- Nur umformen, sortieren und lesbar machen.',
+          '- Falls etwas unklar ist, mit [UNKLAR] markieren statt raten.',
+          '- Das Ergebnis soll für spätere Annotationen und Weekly Review gut weiterverwendbar sein.',
+          '',
+          'ZUSATZ',
+          sessionStepNotes('convert_days') || 'Kein Zusatz.',
+          '',
+          'AUSGABEFORMAT',
+          'Pro Tag:',
+          '# Wochentag, Datum',
+          '## Ereignisse',
+          '## Aufgaben',
+          '## Notizen',
+          '## Offene Stellen / Unklarheiten'
+        ].join('\n');
+      }
+
+      if (type === 'reviewAnnotations') {
+        return [
+          shared,
+          '',
+          'AUFGABE',
+          'Hilf mir, die bereits umgewandelten Tage kurz zu überfliegen und daraus diktierbare Anmerkungsfelder zu erzeugen.',
+          '',
+          'INPUT – UMGWANDELTE TAGE',
+          session.convertedDays || 'Noch keine umgewandelten Tage eingefügt.',
+          '',
+          'BISHERIGE ANMERKUNGEN',
+          session.annotations || 'Noch keine Anmerkungen hinterlegt.',
+          '',
+          'REGELN',
+          '- Keine vollständige Weekly Review machen.',
+          '- Fokus auf: Lücken, Musteransätze, offene Spannungen, Dinge mit Review-Potenzial.',
+          '- Formuliere kurze, diktierbare Prompts oder Stichfragen.',
+          '- Keine Aufgabenliste daraus machen.',
+          '',
+          'ZUSATZ',
+          sessionStepNotes('review_days_new_format') || 'Kein Zusatz.',
+          '',
+          'AUSGABEFORMAT',
+          '1. Tage mit Klärungsbedarf',
+          '2. Erste Muster / Linien',
+          '3. Gute Diktierfragen für Zusatzanmerkungen',
+          '4. Was später in die Weekly Review mitgenommen werden sollte'
+        ].join('\n');
+      }
+
+      if (type === 'quantData') {
+        return [
+          shared,
+          '',
+          'AUFGABE',
+          'Ordne meine quantitativen Wochen-Daten so vor, dass sie später in die Weekly Review eingespeist werden können.',
+          '',
+          'INPUT',
+          session.quantData || 'Noch keine quantitativen Daten eingefügt.',
+          '',
+          'REGELN',
+          '- Nur strukturieren und lesbar machen.',
+          '- Daylio, Toggl, Habits, Sport und Bewegung getrennt aufführen, falls vorhanden.',
+          '- Fehlende Bereiche ausdrücklich als fehlend markieren.',
+          '- Noch keine große Interpretation, nur minimale Musterhinweise.',
+          '',
+          'ZUSATZ',
+          sessionStepNotes('save_quant_data') || 'Kein Zusatz.',
+          '',
+          'AUSGABEFORMAT',
+          '## Stimmung / Daylio',
+          '## Zeittracking / Toggl',
+          '## Habits',
+          '## Bewegung / Sport',
+          '## Minimale Musterhinweise'
+        ].join('\n');
+      }
+
+      if (type === 'migrateTasks') {
+        return [
+          shared,
+          '',
+          'AUFGABE',
+          'Hilf mir, Aufgaben aus dem Bullet Journal in eine klare Migrationsliste zu überführen.',
+          '',
+          'INPUT',
+          (session.migratedTasks || session.bulletJournalRaw || 'Noch kein Aufgabenmaterial eingefügt.'),
+          '',
+          'REGELN',
+          '- Verb + Objekt.',
+          '- Ein Schritt = eine atomare Handlung.',
+          '- Vage Sammelprojekte zerlegen.',
+          '- Aufgaben, Ereignisse und Notizen sauber trennen.',
+          '',
+          'ZUSATZ',
+          sessionStepNotes('migrate_tasks') || 'Kein Zusatz.',
+          '',
+          'AUSGABEFORMAT',
+          '1. Sofort migrierbare Aufgaben',
+          '2. Zu große / unklare Aufgaben mit Zerlegungsvorschlag',
+          '3. Dinge, die keine Aufgabe sind'
+        ].join('\n');
+      }
+
+      if (type === 'openLastWeeklyLog') {
+        return [
+          shared,
+          '',
+          'AUFGABE',
+          'Ich öffne jetzt meinen letzten Weekly-Log-Chat. Hilf mir, daraus nur die Regeln, Promptbausteine und offenen Anschlussstellen für die aktuelle Review herauszuziehen.',
+          '',
+          'LETZTER WEEKLY-LOG-LINK',
+          session.lastWeeklyLogUrl || 'Kein Link hinterlegt.',
+          '',
+          'BISHERIGE ZUSAMMENFASSUNG',
+          session.previousWeeklyLogSummary || 'Noch keine Zusammenfassung hinterlegt.',
+          '',
+          'REGELN',
+          '- Fokus nur auf Review-Workflow, Moduslogik, Inputreihenfolge, sinnvolle Anschlussstellen.',
+          '- Keine komplette Wochenanalyse der alten Woche.',
+          '- Ziel ist nur: den Chat für die aktuelle Woche wieder arbeitsfähig machen.',
+          '',
+          'ZUSATZ',
+          sessionStepNotes('open_last_weekly_log') || 'Kein Zusatz.',
+          '',
+          'AUSGABEFORMAT',
+          '1. Relevante Regeln aus dem alten Chat',
+          '2. Was ich für die aktuelle Woche wiederverwenden sollte',
+          '3. Was diesmal neu oder anders ist',
+          '4. Kompakter Übergabeblock für den aktuellen Weekly-Log-Chat'
+        ].join('\n');
+      }
+
+      if (type === 'startWeeklyReview') {
+        return [
+          shared,
+          '',
+          'STARTE DIE WEEKLY REVIEW.',
+          '',
+          'INPUT 1 – DAILY NOTES DIESER WOCHE',
+          session.dailyNotesRaw || 'Noch keine Daily Notes hinterlegt.',
+          '',
+          'INPUT 2 – EXTERNE WOCHEN-DATEN (OPTIONAL)',
+          session.quantData || 'Keine quantitativen Daten hinterlegt.',
+          '',
+          'INPUT 3 – LETZTER WEEKLY LOG / KONTEXT',
+          [session.previousWeeklyLogSummary, session.lastWeeklyLogUrl].filter(Boolean).join('\n') || 'Kein alter Weekly-Log-Kontext hinterlegt.',
+          '',
+          'ERGÄNZENDE INPUTS',
+          'Umgewandelte Tage:',
+          session.convertedDays || '—',
+          '',
+          'Annotationen:',
+          session.annotations || '—',
+          '',
+          'Migrierte Aufgaben:',
+          session.migratedTasks || '—',
+          '',
+          'REGELN',
+          '- Markiere fehlende Tage oder Unklarheiten, bevor du interpretierst.',
+          '- Trenne strikt Beobachtung, Interpretation und Entscheidung.',
+          '- Wenn etwas nicht aus den Inputs hervorgeht, kennzeichne es als unsicher statt zu raten.',
+          '- Integriere quantitative Daten nur dort, wo sie wirklich etwas stützen.',
+          '- Die Review darf konkret werden, aber nicht in chaotische To-do-Listen kippen.',
+          '',
+          'ZUSATZ',
+          sessionStepNotes('write_current_weekly_review') || 'Kein Zusatz.',
+          '',
+          'GEWÜNSCHTES ERGEBNIS',
+          '1. Beobachtungen der Woche',
+          '2. Interpretationen / Muster',
+          '3. Entscheidungen / Konsequenzen',
+          '4. Was nächste Woche besondere Aufmerksamkeit braucht',
+          '5. Optional: Fokusfelder, Deadlines, handhabbare nächste Schritte'
+        ].join('\n');
+      }
+
+      if (type === 'reviewSummary') {
+        return [
+          shared,
+          '',
+          'AUFGABE',
+          'Verdichte meine aktuelle Weekly Review in eine saubere Nachbereitungsfassung.',
+          '',
+          'INPUT',
+          session.reviewResult || 'Noch kein Review-Ergebnis hinterlegt.',
+          '',
+          'REGELN',
+          '- Kompakt, aber nicht zu dünn.',
+          '- Klare Trennung zwischen Erkenntnissen, Entscheidungen und nächster Woche.',
+          '- Dinge, die eher Artefakte werden sollen, gesondert markieren (z. B. SOP, Proto-Atomic Note, Aufgabenliste).',
+          '',
+          'AUSGABEFORMAT',
+          '## Wichtigste Erkenntnisse',
+          '## Entscheidungen',
+          '## Nächste Woche',
+          '## Mögliche Folgeartefakte'
+        ].join('\n');
+      }
+
+      return [shared, '', 'Kein Prompt für Typ: ' + type].join('\n');
+    }
+
+    function exportJSON() {
+      var session = getSession();
+      if (!session) return;
+      downloadFile('weekly-review-' + safeName(session.weekLabel || today()) + '.json', JSON.stringify({ version: 1, exported: new Date().toISOString(), session: session }, null, 2), 'application/json');
+      toast('JSON exportiert');
+    }
+
+    function exportMarkdown() {
+      var session = getSession();
+      if (!session) return;
+      var md = buildMarkdown(session);
+      downloadFile('weekly-review-' + safeName(session.weekLabel || today()) + '.md', md, 'text/markdown');
+      toast('Markdown exportiert');
+    }
+
+    function buildMarkdown(session) {
+      var lines = [];
+      lines.push('# Weekly Review – ' + (session.weekLabel || 'Ohne Titel'));
+      lines.push('');
+      lines.push('- Review-Datum: ' + (session.reviewDate || '—'));
+      lines.push('- Letzter Weekly Log: ' + (session.lastWeeklyLogUrl || '—'));
+      lines.push('- Fokus: ' + (session.currentFocus || '—'));
+      lines.push('');
+      lines.push('## Schrittstatus');
+      DEFAULT_STEPS.forEach(function (def) {
+        var st = session.steps.find(function (s) { return s.id === def.id; }) || {};
+        lines.push('- [' + (st.done ? 'x' : ' ') + '] ' + def.title + ' (' + def.minutes + ' Min.)');
+        if (st.notes) lines.push('  - Notizen: ' + st.notes.replace(/\n/g, ' / '));
+        if (st.artifacts) lines.push('  - Artefakte: ' + st.artifacts.replace(/\n/g, ' / '));
+      });
+      lines.push('');
+      var fields = [
+        ['Daily Notes', session.dailyNotesRaw],
+        ['Bullet Journal', session.bulletJournalRaw],
+        ['Umgewandelte Tage', session.convertedDays],
+        ['Anmerkungen', session.annotations],
+        ['Quantitative Daten', session.quantData],
+        ['Migrierte Aufgaben', session.migratedTasks],
+        ['Vorheriger Weekly-Log-Kontext', session.previousWeeklyLogSummary],
+        ['Review-Ergebnis', session.reviewResult],
+        ['Nächste Woche', session.nextWeekPreview]
+      ];
+      fields.forEach(function (pair) {
+        lines.push('## ' + pair[0]);
+        lines.push('');
+        lines.push(pair[1] || '—');
+        lines.push('');
+      });
+      return lines.join('\n');
+    }
+
+    function safeName(s) {
+      return String(s || 'export').toLowerCase().replace(/[^a-z0-9äöüß\- ]/gi, '').replace(/\s+/g, '-');
+    }
+
+    function downloadFile(name, content, mime) {
+      var blob = new Blob([content], { type: mime || 'text/plain' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function importJSON() {
+      var box = document.getElementById('importBox');
+      if (!box) return;
+      try {
+        var parsed = JSON.parse(box.value);
+        if (!parsed.session) throw new Error('Kein session-Feld gefunden');
+        var session = parsed.session;
+        session.id = uid();
+        session.createdAt = new Date().toISOString();
+        session.updatedAt = new Date().toISOString();
+        S.sessions.unshift(session);
+        S.currentSessionId = session.id;
+        normalizeState();
+        save();
+        renderAll();
+        box.value = '';
+        toast('Session importiert');
+      } catch (e) {
+        toast('Import fehlgeschlagen');
+      }
+    }
+
+    function resetCurrentSession() {
+      var session = getSession();
+      if (!session) return;
+      var ok = confirm('Aktive Session wirklich zurücksetzen?');
+      if (!ok) return;
+      var fresh = blankSession();
+      fresh.id = session.id;
+      fresh.weekLabel = session.weekLabel;
+      fresh.reviewDate = session.reviewDate;
+      fresh.lastWeeklyLogUrl = session.lastWeeklyLogUrl;
+      var idx = S.sessions.findIndex(function (s) { return s.id === session.id; });
+      S.sessions[idx] = fresh;
+      save();
+      renderAll();
+      toast('Session zurückgesetzt');
+    }
+
+    function renderAll() {
+      var session = getSession();
+      renderTabs();
+      updateMeta();
+      document.getElementById('panel-dashboard').innerHTML = dashboardHTML(session);
+      document.getElementById('panel-steps').innerHTML = stepsHTML(session);
+      document.getElementById('panel-prompts').innerHTML = promptsHTML(session);
+      document.getElementById('panel-data').innerHTML = dataHTML(session);
+      document.getElementById('panel-export').innerHTML = exportHTML(session);
+      switchTab(S.currentTab || 'dashboard');
+    }
+
+    load();
+    renderAll();
+  </script>
+</body>
+</html>
