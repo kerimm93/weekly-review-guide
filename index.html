@@ -804,7 +804,7 @@
       document.querySelectorAll('.panel').forEach(function (panel) {
         panel.classList.toggle('active', panel.id === 'panel-' + tabId);
       });
-      if (!skipSave) save();
+      if (!skipSave) save(true, true, true);
     }
 
     function renderTabs() {
@@ -906,7 +906,7 @@
 
     function switchSession(id) {
       S.currentSessionId = id;
-      save();
+      save(true, true, true);
       renderAll();
     }
 
@@ -1429,9 +1429,33 @@
       return files[0];
     }
 
-    function parseDailyLogPayloadFromFile(file) {
-      if (!file || !file.content) throw new Error('Daily-Log-Gist-Datei enthält keinen direkt lesbaren Inhalt');
-      return JSON.parse(file.content);
+    async function readDailyLogFileContent(file, token) {
+      if (!file) throw new Error('Keine Daily-Log-Datei gefunden');
+      var inline = typeof file.content === 'string' ? file.content : '';
+      var needsRemoteRead = !inline || file.truncated;
+      if (!needsRemoteRead) return inline;
+      if (!file.raw_url) {
+        if (!inline) throw new Error('Daily-Log-Gist-Datei enthält keinen lesbaren Inhalt');
+        return inline;
+      }
+      var rawRes = await fetchWithTimeoutRetry(file.raw_url, {
+        headers: dailyLogReadHeaders(token)
+      }, 15000, 1);
+      if (!rawRes.ok) throw new Error('HTTP ' + rawRes.status + ' beim Lesen der Daily-Log-Datei');
+      var rawText = await rawRes.text();
+      if (!rawText || !rawText.trim()) throw new Error('Daily-Log-Gist-Datei ist leer');
+      return rawText;
+    }
+
+    async function parseDailyLogPayloadFromFile(file, token) {
+      var rawText = await readDailyLogFileContent(file, token);
+      try {
+        var payload = JSON.parse(rawText);
+        if (!payload || typeof payload !== 'object') throw new Error('JSON-Typ ungültig');
+        return { payload: payload, rawText: rawText };
+      } catch (e) {
+        throw new Error('Daily-Log-Gist-Datei ist kein gültiges JSON');
+      }
     }
 
     function getSelectedDailyLogDays(session) {
@@ -1483,9 +1507,13 @@
         if (!res.ok) throw new Error('HTTP ' + res.status);
         var json = await res.json();
         var file = pickDailyLogReadFile(json);
-        var payload = parseDailyLogPayloadFromFile(file);
-        var rawText = file.content;
+        var parsed = await parseDailyLogPayloadFromFile(file, cfg.token);
+        var payload = parsed.payload;
+        var rawText = parsed.rawText;
         var rawDays = extractDayArray(payload);
+        if (!rawDays.length) {
+          throw new Error('Keine Daily-Log-Tagesdaten erkannt (erwartet z. B. days, dailyLogs oder entries)');
+        }
         var days = rawDays.map(normalizeImportedDay).filter(function (day) {
           return day.date || day.notes || day.tasks.length || day.events.length || day.migrations.length || day.quantText || day.annotations || day.bulletJournalRaw;
         });
@@ -2181,9 +2209,27 @@
       };
     }
 
+    async function readWeeklySyncFileContent(file, token) {
+      if (!file) throw new Error('Sync-Datei fehlt');
+      var inline = typeof file.content === 'string' ? file.content : '';
+      var needsRemoteRead = !inline || file.truncated;
+      if (!needsRemoteRead) return inline;
+      if (!file.raw_url) {
+        if (!inline) throw new Error('Sync-Datei enthält keinen lesbaren Inhalt');
+        return inline;
+      }
+      var rawRes = await fetchWithTimeoutRetry(file.raw_url, {
+        headers: githubHeaders(token)
+      }, 15000, 1);
+      if (!rawRes.ok) throw new Error('HTTP ' + rawRes.status + ' beim Lesen der Sync-Datei');
+      var rawText = await rawRes.text();
+      if (!rawText || !rawText.trim()) throw new Error('Sync-Datei ist leer');
+      return rawText;
+    }
+
     function parseRemotePayload(text) {
       var parsed = JSON.parse(text);
-      if (parsed && parsed.S) return parsed;
+      if (parsed && parsed.S && typeof parsed.S === 'object' && !Array.isArray(parsed.S)) return parsed;
       if (parsed && parsed.sessions) {
         return {
           version: parsed.version || 1,
@@ -2208,10 +2254,11 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       var json = await res.json();
       var file = getRemoteFileFromResponse(json);
+      var content = await readWeeklySyncFileContent(file, token);
       return {
         raw: json,
         file: file,
-        payload: parseRemotePayload(file.content)
+        payload: parseRemotePayload(content)
       };
     }
 
@@ -2224,22 +2271,35 @@
       return tsValue(a) >= tsValue(b) ? (a || b || new Date().toISOString()) : (b || a || new Date().toISOString());
     }
 
+    function latestSessionTimestamp(state) {
+      var sessions = (state && Array.isArray(state.sessions)) ? state.sessions : [];
+      var latest = 0;
+      sessions.forEach(function (session) {
+        var sessionTs = tsValue((session && (session.updatedAt || session.createdAt)) || '');
+        if (sessionTs > latest) latest = sessionTs;
+      });
+      return latest;
+    }
+
     function applySyncPayload(payload) {
       if (!payload || !payload.S) throw new Error('Sync-Payload ohne State');
-      S = deepClone(payload.S);
-      if (!Array.isArray(S.sessions)) S.sessions = [];
-      if (!S.currentTab) S.currentTab = 'dashboard';
-      if (!S.dailyLogReadCache) {
-        S.dailyLogReadCache = {
+      if (typeof payload.S !== 'object' || Array.isArray(payload.S)) throw new Error('Sync-Payload-State ungültig');
+      var nextState = deepClone(payload.S);
+      if (!Array.isArray(nextState.sessions)) nextState.sessions = [];
+      if (!nextState.currentTab) nextState.currentTab = 'dashboard';
+      if (!nextState.dailyLogReadCache) {
+        nextState.dailyLogReadCache = {
           loadedAt: '', gistId: '', fileName: '', sourceKind: 'external_read_only_gist', rawText: '', days: [], weeks: []
         };
       }
-      if (!S.sessions.length) {
+      if (!nextState.sessions.length) {
         var first = blankSession();
-        S.sessions = [first];
-        S.currentSessionId = first.id;
+        nextState.sessions = [first];
+        nextState.currentSessionId = first.id;
       }
-      if (!getSession()) S.currentSessionId = S.sessions[0].id;
+      var hasCurrent = nextState.sessions.some(function (session) { return session && session.id === nextState.currentSessionId; });
+      if (!hasCurrent) nextState.currentSessionId = nextState.sessions[0].id;
+      S = nextState;
       normalizeState();
       S._lastExported = payload.exported || S._lastExported || new Date().toISOString();
       save(true, true, true);
@@ -2265,7 +2325,10 @@
         currentTab: (localState && localState.currentTab) || (remoteState && remoteState.currentTab) || 'dashboard',
         currentSessionId: (localState && localState.currentSessionId) || (remoteState && remoteState.currentSessionId) || '',
         sessions: [],
-        _lastExported: newerIso((localState && localState._lastExported) || '', (remoteState && remoteState._lastExported) || '')
+        _lastExported: newerIso((localState && localState._lastExported) || '', (remoteState && remoteState._lastExported) || ''),
+        dailyLogReadCache: deepClone((localState && localState.dailyLogReadCache) || (remoteState && remoteState.dailyLogReadCache) || {
+          loadedAt: '', gistId: '', fileName: '', sourceKind: 'external_read_only_gist', rawText: '', days: [], weeks: []
+        })
       };
 
       var sessionMap = {};
@@ -2309,12 +2372,6 @@
         merged.currentSessionId = merged.sessions[0].id;
       }
 
-      if (!merged.dailyLogReadCache) {
-        merged.dailyLogReadCache = {
-          loadedAt: '', gistId: '', fileName: '', sourceKind: 'external_read_only_gist', rawText: '', days: [], weeks: []
-        };
-      }
-
       return merged;
     }
 
@@ -2342,7 +2399,7 @@
         try {
           var remote = await gistGetRemotePayload(cfg.token, cfg.gistId);
           var remoteTs = tsValue((remote.payload && (remote.payload.exported || (remote.payload.S && remote.payload.S._lastExported))) || '');
-          var localTs = tsValue(payload.exported);
+          var localTs = Math.max(tsValue(S._lastExported || ''), latestSessionTimestamp(S));
           if (remoteTs > localTs) {
             var msg = 'Cloud-Stand ist neuer. Nutze Merge oder Herunterladen.';
             if (!silent) alert(msg);
@@ -2383,7 +2440,7 @@
       try {
         var remote = await gistGetRemotePayload(cfg.token, cfg.gistId);
         var remoteTs = tsValue((remote.payload && (remote.payload.exported || (remote.payload.S && remote.payload.S._lastExported))) || '');
-        var localTs = tsValue(S._lastExported || '');
+        var localTs = Math.max(tsValue(S._lastExported || ''), latestSessionTimestamp(S));
         if (localTs > remoteTs) {
           var ok = confirm('Lokal ist neuer als Cloud. Wirklich aus dem Gist laden und lokal überschreiben?');
           if (!ok) return;
@@ -2418,7 +2475,8 @@
       try {
         var json = await getRes.json();
         var file = getRemoteFileFromResponse(json);
-        remotePayload = parseRemotePayload(file.content);
+        var content = await readWeeklySyncFileContent(file, cfg.token);
+        remotePayload = parseRemotePayload(content);
       } catch (e) {
         console.error('[Merge] Schritt 2 – JSON-Parse fehlgeschlagen:', e);
         alert('Fehler beim Lesen des Cloud-JSON (Schritt 2): ' + ((e && e.message) || e));
@@ -2468,7 +2526,7 @@
         var cfg = getGistConfig();
         var remote = await gistGetRemotePayload(cfg.token, cfg.gistId);
         var remoteTs = tsValue((remote.payload && (remote.payload.exported || (remote.payload.S && remote.payload.S._lastExported))) || '');
-        var localTs = tsValue(S._lastExported || '');
+        var localTs = Math.max(tsValue(S._lastExported || ''), latestSessionTimestamp(S));
         if (remoteTs > localTs) {
           applySyncPayload(remote.payload);
           toast('Neuerer Cloud-Stand geladen');
@@ -2554,6 +2612,7 @@
       try {
         var parsed = JSON.parse(box.value);
         if (!parsed.session) throw new Error('Kein session-Feld gefunden');
+        if (typeof parsed.session !== 'object' || Array.isArray(parsed.session)) throw new Error('session muss ein Objekt sein');
         var session = parsed.session;
         session.id = uid();
         session.createdAt = new Date().toISOString();
