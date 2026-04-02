@@ -439,25 +439,6 @@
       margin-bottom: 6px;
     }
 
-    .badge-readonly {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--blue);
-      color: var(--ink);
-      background: rgba(52,152,219,.12);
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12px;
-      color: var(--gold-light);
-    }
-
     #toast {
       position: fixed;
       right: 16px;
@@ -543,8 +524,6 @@
     var GIST_ID_KEY = 'weekly_review_orchestrator_gist_id';
     var GIST_API_ROOT = 'https://api.github.com/gists/';
     var AUTO_SYNC_DELAY = 30000;
-    var DAILY_LOG_READ_GIST_ID_KEY = 'weekly_review_orchestrator_dailylog_read_gist_id';
-    var DAILY_LOG_READ_TOKEN_KEY = 'weekly_review_orchestrator_dailylog_read_token';
     var autoSyncTimer = null;
     var hasTriedStartupSync = false;
 
@@ -626,16 +605,7 @@
       version: 1,
       currentTab: 'dashboard',
       currentSessionId: '',
-      sessions: [],
-      dailyLogReadCache: {
-        loadedAt: '',
-        gistId: '',
-        fileName: '',
-        sourceKind: 'external_read_only_gist',
-        rawText: '',
-        days: [],
-        weeks: []
-      }
+      sessions: []
     };
 
     function uid() {
@@ -644,6 +614,10 @@
 
     function today() {
       return new Date().toISOString().split('T')[0];
+    }
+
+    function todayDE() {
+      return new Date().toLocaleDateString('de-DE');
     }
 
     function esc(s) {
@@ -691,25 +665,6 @@
         previousWeeklyLogSummary: '',
         reviewResult: '',
         nextWeekPreview: '',
-        dailyLogSelection: {
-          mode: 'week',
-          weekKey: '',
-          rangeStart: '',
-          rangeEnd: ''
-        },
-        dailyLogReadMeta: {
-          loadedAt: '',
-          sourceGistId: '',
-          sourceFile: '',
-          sourceKind: 'external_read_only_gist',
-          lastAppliedAt: '',
-          selectedLabel: ''
-        },
-        weeklyTaskOverview: {
-          weeklyLog: [],
-          futureLog: [],
-          uncertain: []
-        },
         steps: steps,
         promptHistory: []
       };
@@ -731,17 +686,6 @@
       } catch (e) {}
       if (!Array.isArray(S.sessions)) S.sessions = [];
       if (!S.currentTab) S.currentTab = 'dashboard';
-      if (!S.dailyLogReadCache) {
-        S.dailyLogReadCache = {
-          loadedAt: '',
-          gistId: '',
-          fileName: '',
-          sourceKind: 'external_read_only_gist',
-          rawText: '',
-          days: [],
-          weeks: []
-        };
-      }
       if (!S.sessions.length) {
         var first = blankSession();
         S.sessions.push(first);
@@ -754,11 +698,7 @@
     }
 
     function normalizeState() {
-      var fresh = blankSession();
       S.sessions.forEach(function (session) {
-        Object.keys(fresh).forEach(function (key) {
-          if (session[key] === undefined) session[key] = JSON.parse(JSON.stringify(fresh[key]));
-        });
         if (!session.steps || !session.steps.length) {
           session.steps = blankSession().steps;
         }
@@ -766,13 +706,8 @@
           var existing = session.steps.find(function (s) { return s.id === def.id; });
           if (!existing) session.steps.push({ id: def.id, done: false, notes: '', artifacts: '', promptNotes: '' });
         });
-        if (!session.dailyLogSelection) session.dailyLogSelection = JSON.parse(JSON.stringify(fresh.dailyLogSelection));
-        if (!session.dailyLogReadMeta) session.dailyLogReadMeta = JSON.parse(JSON.stringify(fresh.dailyLogReadMeta));
-        if (!session.weeklyTaskOverview) session.weeklyTaskOverview = JSON.parse(JSON.stringify(fresh.weeklyTaskOverview));
         session.updatedAt = session.updatedAt || session.createdAt || new Date().toISOString();
       });
-      if (!S.dailyLogReadCache.weeks) S.dailyLogReadCache.weeks = [];
-      if (!S.dailyLogReadCache.days) S.dailyLogReadCache.days = [];
     }
 
     function save(skipAutoSync, preserveExported, preserveActiveSessionTimestamp) {
@@ -814,6 +749,10 @@
       }).join('');
     }
 
+    function stepDefinition(stepId) {
+      return DEFAULT_STEPS.find(function (s) { return s.id === stepId; });
+    }
+
     function completedCount(session) {
       return session.steps.filter(function (s) { return s.done; }).length;
     }
@@ -848,18 +787,6 @@
       var st = getStepData(stepId);
       if (!st) return;
       st[field] = value;
-      save();
-      renderAll();
-    }
-
-    function patchDailyLogSelection(field, value) {
-      var session = getSession();
-      if (!session) return;
-      if (!session.dailyLogSelection) session.dailyLogSelection = blankSession().dailyLogSelection;
-      session.dailyLogSelection[field] = value;
-      if (field === 'mode' && value === 'week' && !session.dailyLogSelection.weekKey && S.dailyLogReadCache.weeks.length) {
-        session.dailyLogSelection.weekKey = S.dailyLogReadCache.weeks[0].key;
-      }
       save();
       renderAll();
     }
@@ -916,7 +843,7 @@
         var step = session.steps.find(function (s) { return s.id === def.id; });
         return !step || !step.done;
       });
-      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Wochensession</div>\n              <div class="notice">Hier steuerst du die Review wie in deinem Neurolist-Ablauf: erst Material schließen, dann strukturieren, dann den Weekly-Log-Chat mit dem eigentlichen Review anwerfen.</div>\n              <label>Wochenlabel</label>\n              <input value="' + esc(session.weekLabel) + '" onchange="patchSession(\'weekLabel\', this.value)" placeholder="z. B. KW 14 – 2026" />\n              <label>Review-Datum</label>\n              <input type="date" value="' + esc(session.reviewDate || today()) + '" onchange="patchSession(\'reviewDate\', this.value)" />\n              <label>Letzter Weekly-Log-Chat / URL</label>\n              <input value="' + esc(session.lastWeeklyLogUrl) + '" onchange="patchSession(\'lastWeeklyLogUrl\', this.value)" placeholder="https://chatgpt.com/..." />\n              <label>Aktueller Fokus dieser Review</label>\n              <textarea class="compact" onchange="patchSession(\'currentFocus\', this.value)" placeholder="Was soll diese Review diesmal besonders klären?">' + esc(session.currentFocus) + '</textarea>\n              <label>Wöchentliche Intention</label>\n              <textarea class="compact" onchange="patchSession(\'weeklyIntent\', this.value)" placeholder="Wofür machst du diese Weekly Review konkret?">' + esc(session.weeklyIntent) + '</textarea>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Fortschritt</div>\n              <div class="small">' + completedCount(session) + ' von ' + DEFAULT_STEPS.length + ' Schritten erledigt. Offene Minuten: ' + remainingMinutes(session) + '.</div>\n              <div class="progress"><div class="progress-fill" style="width:' + progress + '%"></div></div>\n              <div class="small" style="margin-top:10px">Nächster offener Schritt: <strong>' + esc(nextOpen ? nextOpen.title : 'Alles erledigt') + '</strong></div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="switchTab(\'steps\')">Zur Schrittliste</button>\n                <button class="btn btn-m" onclick="switchTab(\'prompts\')">Zum Prompt Studio</button>\n                <button class="btn btn-s" onclick="switchTab(\'data\')">Zur Datenansicht</button>\n              </div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Session-Aktionen</div>\n              <div class="btn-row">\n                <button class="btn btn-v" onclick="newSession()">Neue Session</button>\n                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>\n                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>\n              </div>\n              <div class="small" style="margin-top:12px">Du kannst Wochen getrennt als Sessions führen. Alles wird lokal gespeichert.</div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Review-Logik kompakt</div>\n              <table class="table-lite">\n                <tr><th>Phase</th><th>Ziel</th></tr>\n                <tr><td>Vorbereitung</td><td>Daily Notes schließen, Tage umformen, Annotationen diktieren.</td></tr>\n                <tr><td>Datenbasis</td><td>Quantitative Daten und migrierte Aufgaben festhalten.</td></tr>\n                <tr><td>Weekly Log</td><td>Letzten Weekly-Log-Kontext öffnen und Review mit klarer Input-Reihenfolge starten.</td></tr>\n                <tr><td>Review</td><td>Beobachtung, Interpretation und Entscheidung sauber trennen.</td></tr>\n              </table>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktive Sessions</div>\n              <div class="session-list">' + sessionListHTML() + '</div>\n            </div>\n          </div>\n        </div>\n      ';
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Wochensession</div>\n              <div class="notice">Hier steuerst du die Review wie in deinem Neurolist-Ablauf: erst Material schließen, dann strukturieren, dann den Weekly-Log-Chat mit dem eigentlichen Review anwerfen.</div>\n              <label>Wochenlabel</label>\n              <input value="' + esc(session.weekLabel) + '" onchange="patchSession(\'weekLabel\', this.value)" placeholder="z. B. KW 14 – 2026" />\n              <label>Review-Datum</label>\n              <input type="date" value="' + esc(session.reviewDate || today()) + '" onchange="patchSession(\'reviewDate\', this.value)" />\n              <label>Letzter Weekly-Log-Chat / URL</label>\n              <input value="' + esc(session.lastWeeklyLogUrl) + '" onchange="patchSession(\'lastWeeklyLogUrl\', this.value)" placeholder="https://chatgpt.com/..." />\n              <label>Aktueller Fokus dieser Review</label>\n              <textarea class="compact" onchange="patchSession(\'currentFocus\', this.value)" placeholder="Was soll diese Review diesmal besonders klären?">' + esc(session.currentFocus) + '</textarea>\n              <label>Wöchentliche Intention</label>\n              <textarea class="compact" onchange="patchSession(\'weeklyIntent\', this.value)" placeholder="Wofür machst du diese Weekly Review konkret?">' + esc(session.weeklyIntent) + '</textarea>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Fortschritt</div>\n              <div class="small">' + completedCount(session) + ' von ' + DEFAULT_STEPS.length + ' Schritten erledigt. Offene Minuten: ' + remainingMinutes(session) + '.</div>\n              <div class="progress"><div class="progress-fill" style="width:' + progress + '%"></div></div>\n              <div class="small" style="margin-top:10px">Nächster offener Schritt: <strong>' + esc(nextOpen ? nextOpen.title : 'Alles erledigt') + '</strong></div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="switchTab(\'steps\')">Zur Schrittliste</button>\n                <button class="btn btn-m" onclick="switchTab(\'prompts\')">Zum Prompt Studio</button>\n              </div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Session-Aktionen</div>\n              <div class="btn-row">\n                <button class="btn btn-v" onclick="newSession()">Neue Session</button>\n                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>\n                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>\n              </div>\n              <div class="small" style="margin-top:12px">Du kannst Wochen getrennt als Sessions führen. Alles wird lokal gespeichert.</div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Review-Logik kompakt</div>\n              <table class="table-lite">\n                <tr><th>Phase</th><th>Ziel</th></tr>\n                <tr><td>Vorbereitung</td><td>Daily Notes schließen, Tage umformen, Annotationen diktieren.</td></tr>\n                <tr><td>Datenbasis</td><td>Quantitative Daten und migrierte Aufgaben festhalten.</td></tr>\n                <tr><td>Weekly Log</td><td>Letzten Weekly-Log-Kontext öffnen und Review mit klarer Input-Reihenfolge starten.</td></tr>\n                <tr><td>Review</td><td>Beobachtung, Interpretation und Entscheidung sauber trennen.</td></tr>\n              </table>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktive Sessions</div>\n              <div class="session-list">' + sessionListHTML() + '</div>\n            </div>\n          </div>\n        </div>\n      ';
     }
 
     function sessionListHTML() {
@@ -989,61 +916,7 @@
     }
 
     function dataHTML(session) {
-      var dailyLogSourceHtml = renderDailyLogSourceHTML(session);
-      var selectionHtml = renderDailyLogSelectionHTML(session);
-      var previewHtml = renderDailyLogPreviewHTML(session);
-      var migrationHtml = renderWeeklyTaskOverviewHTML(session);
-
-      return `
-        <div class="grid-2">
-          <div>
-            <div class="qs">
-              <div class="qh">Externe Daily-Log-Quelle <span class="badge-readonly">Read-only</span></div>
-              ${dailyLogSourceHtml}
-            </div>
-
-            <div class="qs">
-              <div class="qh">Woche / Datumsbereich aus Daily Log</div>
-              ${selectionHtml}
-            </div>
-
-            <div class="qs">
-              <div class="qh">Rohmaterial</div>
-              <label>Daily Notes dieser Woche</label>
-              <textarea onchange="patchSession('dailyNotesRaw', this.value)" placeholder="Hier Rohtext, Dateiinhalt oder Sammelblock einfügen">${esc(session.dailyNotesRaw)}</textarea>
-              <label>Bullet-Journal-Rohmaterial / Tage der Woche</label>
-              <textarea onchange="patchSession('bulletJournalRaw', this.value)" placeholder="Die Tage aus dem Bullet Journal, noch roh">${esc(session.bulletJournalRaw)}</textarea>
-              <label>Umgewandelte Tage / Obsidian-Format</label>
-              <textarea onchange="patchSession('convertedDays', this.value)" placeholder="Hier kommt das neue strukturierte Format rein">${esc(session.convertedDays)}</textarea>
-              <label>Anmerkungen / diktierte Zusatzgedanken</label>
-              <textarea onchange="patchSession('annotations', this.value)" placeholder="Muster, Ergänzungen, Korrekturen, Fokusstellen">${esc(session.annotations)}</textarea>
-            </div>
-          </div>
-
-          <div>
-            <div class="qs">
-              <div class="qh">Geladene Tagesdaten-Vorschau</div>
-              ${previewHtml}
-            </div>
-
-            <div class="qs">
-              <div class="qh">Migrationshorizonte der gewählten Woche</div>
-              ${migrationHtml}
-            </div>
-
-            <div class="qs">
-              <div class="qh">Ergänzende Daten</div>
-              <label>Quantitative Wochen-Daten</label>
-              <textarea onchange="patchSession('quantData', this.value)" placeholder="Daylio, Toggl, Habits, Sport, Bewegung">${esc(session.quantData)}</textarea>
-              <label>Migrierte Aufgaben</label>
-              <textarea onchange="patchSession('migratedTasks', this.value)" placeholder="Finale Aufgabenliste / Transferliste">${esc(session.migratedTasks)}</textarea>
-              <label>Zusammenfassung des letzten Weekly Logs</label>
-              <textarea onchange="patchSession('previousWeeklyLogSummary', this.value)" placeholder="Wichtige Prompt-Regeln, relevante Erkenntnisse, Dinge die weitergeführt werden sollen">${esc(session.previousWeeklyLogSummary)}</textarea>
-              <div class="notice success">Tipp: Die Read-only-Daily-Log-Quelle ergänzt deine Session. Sie schreibt nie zurück in das externe Gist.</div>
-            </div>
-          </div>
-        </div>
-      `;
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Rohmaterial</div>\n              <label>Daily Notes dieser Woche</label>\n              <textarea onchange="patchSession(\'dailyNotesRaw\', this.value)" placeholder="Hier Rohtext, Dateiinhalt oder Sammelblock einfügen">' + esc(session.dailyNotesRaw) + '</textarea>\n              <label>Bullet-Journal-Rohmaterial / Tage der Woche</label>\n              <textarea onchange="patchSession(\'bulletJournalRaw\', this.value)" placeholder="Die Tage aus dem Bullet Journal, noch roh">' + esc(session.bulletJournalRaw) + '</textarea>\n              <label>Umgewandelte Tage / Obsidian-Format</label>\n              <textarea onchange="patchSession(\'convertedDays\', this.value)" placeholder="Hier kommt das neue strukturierte Format rein">' + esc(session.convertedDays) + '</textarea>\n              <label>Anmerkungen / diktierte Zusatzgedanken</label>\n              <textarea onchange="patchSession(\'annotations\', this.value)" placeholder="Muster, Ergänzungen, Korrekturen, Fokusstellen">' + esc(session.annotations) + '</textarea>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Ergänzende Daten</div>\n              <label>Quantitative Wochen-Daten</label>\n              <textarea onchange="patchSession(\'quantData\', this.value)" placeholder="Daylio, Toggl, Habits, Sport, Bewegung">' + esc(session.quantData) + '</textarea>\n              <label>Migrierte Aufgaben</label>\n              <textarea onchange="patchSession(\'migratedTasks\', this.value)" placeholder="Finale Aufgabenliste / Transferliste">' + esc(session.migratedTasks) + '</textarea>\n              <label>Zusammenfassung des letzten Weekly Logs</label>\n              <textarea onchange="patchSession(\'previousWeeklyLogSummary\', this.value)" placeholder="Wichtige Prompt-Regeln, relevante Erkenntnisse, Dinge die weitergeführt werden sollen">' + esc(session.previousWeeklyLogSummary) + '</textarea>\n              <div class="notice success">Tipp: Du musst hier nicht perfekt sauber arbeiten. Wichtig ist, dass die App genug Material hat, um daraus den jeweils passenden Prompt zu bauen.</div>\n            </div>\n          </div>\n        </div>\n      ';
     }
 
     function exportHTML(session) {
@@ -1102,7 +975,7 @@
               <div class="tag">Migration</div>
               <div class="tag">Review-Start</div>
               <div class="tag">Review-Zusammenfassung</div>
-              <div class="notice info" style="margin-top:12px">Der interne Weekly-Review-Gist-Sync und die externe Daily-Log-Read-Quelle sind bewusst getrennt. Die Daily-Log-Quelle wird nur per GET gelesen.</div>
+              <div class="notice info" style="margin-top:12px">Die App ruft kein Modell direkt auf. Sie ist bewusst als Prompt-Handoff-Werkzeug gebaut. Der Gist-Sync speichert nur den App-State, nie den Token.</div>
             </div>
           </div>
         </div>
@@ -1159,654 +1032,6 @@
       var st = getStepData(stepId);
       if (!st) return '';
       return [st.notes, st.promptNotes, st.artifacts].filter(Boolean).join('\n');
-    }
-
-    function firstNonEmpty() {
-      for (var i = 0; i < arguments.length; i++) {
-        if (arguments[i] !== undefined && arguments[i] !== null && arguments[i] !== '') return arguments[i];
-      }
-      return '';
-    }
-
-    function asArray(value) {
-      if (Array.isArray(value)) return value;
-      if (value === undefined || value === null || value === '') return [];
-      return [value];
-    }
-
-    function toReadableText(value) {
-      if (value === undefined || value === null) return '';
-      if (typeof value === 'string') return value;
-      if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-      try {
-        return JSON.stringify(value);
-      } catch (e) {
-        return '';
-      }
-    }
-
-    function looksLikeDateString(value) {
-      return /^\d{4}-\d{2}-\d{2}/.test(String(value || ''));
-    }
-
-    function coerceDateOnly(value) {
-      if (!value) return '';
-      if (looksLikeDateString(value)) return String(value).slice(0, 10);
-      var d = new Date(value);
-      if (isNaN(d.getTime())) return '';
-      return d.toISOString().slice(0, 10);
-    }
-
-    function normalizeHorizon(value) {
-      var v = String(value || '').trim().toLowerCase();
-      if (!v) return '';
-      if (['weekly_log', 'weeklylog', 'weekly', 'week', 'current_week', 'current', 'immediate', 'planning'].indexOf(v) !== -1) return 'weekly_log';
-      if (['future_log', 'futurelog', 'future', 'later', 'someday', 'backlog', 'later_maybe'].indexOf(v) !== -1) return 'future_log';
-      return v.replace(/\s+/g, '_');
-    }
-
-    function normalizeLooseItem(item) {
-      if (typeof item === 'string') return { text: item };
-      if (!item || typeof item !== 'object') return { text: String(item || '') };
-      return Object.assign({}, item, {
-        text: firstNonEmpty(item.text, item.title, item.label, item.name, item.task, item.event, item.description)
-      });
-    }
-
-    function normalizeTaskItem(item) {
-      var base = normalizeLooseItem(item);
-      return {
-        text: base.text,
-        status: firstNonEmpty(base.status, base.state, ''),
-        done: !!base.done,
-        id: firstNonEmpty(base.id, base.taskId, '')
-      };
-    }
-
-    function normalizeEventItem(item) {
-      var base = normalizeLooseItem(item);
-      return {
-        text: base.text,
-        kind: firstNonEmpty(base.kind, base.type, ''),
-        id: firstNonEmpty(base.id, base.eventId, '')
-      };
-    }
-
-    function normalizeMigrationItem(item, fallbackDate) {
-      var base = normalizeLooseItem(item);
-      return {
-        text: base.text,
-        date: coerceDateOnly(firstNonEmpty(base.date, fallbackDate)),
-        direction: firstNonEmpty(base.direction, base.flow, base.move, ''),
-        sourceHorizon: normalizeHorizon(firstNonEmpty(base.sourceHorizon, base.from, '')),
-        targetHorizon: normalizeHorizon(firstNonEmpty(base.targetHorizon, base.horizon, base.target, base.destination, base.to, '')),
-        targetLabel: firstNonEmpty(base.targetLabel, base.destinationLabel, base.target, base.destination, ''),
-        id: firstNonEmpty(base.id, base.taskId, '')
-      };
-    }
-
-    function collectQuantText(day) {
-      var parts = [];
-      var pairs = [
-        ['mood', day.mood],
-        ['daylio', day.daylio],
-        ['habits', day.habits],
-        ['toggl', day.toggl],
-        ['timeTracking', day.timeTracking],
-        ['movement', day.movement],
-        ['sport', day.sport],
-        ['sleep', day.sleep],
-        ['metrics', day.metrics],
-        ['quantData', day.quantData]
-      ];
-      pairs.forEach(function (pair) {
-        var txt = toReadableText(pair[1]);
-        if (txt) parts.push(pair[0] + ': ' + txt);
-      });
-      return parts.join('\n');
-    }
-
-    function normalizeImportedDay(day) {
-      var date = coerceDateOnly(firstNonEmpty(day.date, day.dayDate, day.isoDate, day.day, day.createdAt, day.updatedAt));
-      var tasks = asArray(firstNonEmpty(day.tasks, day.openTasks, day.dailyTasks, day.todos, [])).map(normalizeTaskItem).filter(function (item) { return item.text; });
-      var events = asArray(firstNonEmpty(day.events, day.logEvents, day.eventItems, [])).map(normalizeEventItem).filter(function (item) { return item.text; });
-      var migrations = asArray(firstNonEmpty(day.migrations, day.taskMigrations, day.movedTasks, day.migrationLog, [])).map(function (item) {
-        return normalizeMigrationItem(item, date);
-      }).filter(function (item) { return item.text || item.targetHorizon; });
-      return {
-        date: date,
-        title: firstNonEmpty(day.title, day.label, ''),
-        notes: firstNonEmpty(day.notes, day.note, day.body, day.content, day.summary, ''),
-        bulletJournalRaw: firstNonEmpty(day.bulletJournalRaw, day.bujoRaw, day.rawBulletJournal, day.rapidLogRaw, ''),
-        annotations: firstNonEmpty(day.annotations, day.reviewNotes, day.annotationText, ''),
-        quantText: collectQuantText(day),
-        tasks: tasks,
-        events: events,
-        migrations: migrations
-      };
-    }
-
-    function looksLikeDayObject(obj) {
-      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
-      return !!firstNonEmpty(obj.date, obj.dayDate, obj.isoDate, obj.day, obj.createdAt, obj.updatedAt, obj.notes, obj.note, obj.tasks, obj.events, obj.migrations, obj.taskMigrations, obj.movedTasks);
-    }
-
-    function extractDayArray(payload) {
-      if (!payload) return [];
-      var directCandidates = [
-        payload.days,
-        payload.dailyLogs,
-        payload.entries,
-        payload.logs,
-        payload.items,
-        payload.cards,
-        payload.records,
-        payload.data && payload.data.days,
-        payload.state && payload.state.days,
-        payload.S && payload.S.days
-      ];
-      for (var i = 0; i < directCandidates.length; i++) {
-        if (Array.isArray(directCandidates[i])) return directCandidates[i];
-      }
-
-      var found = [];
-      function walk(node, depth) {
-        if (!node || depth > 4) return;
-        if (Array.isArray(node)) {
-          if (node.length && node.some(looksLikeDayObject)) found.push(node);
-          node.forEach(function (item) { walk(item, depth + 1); });
-          return;
-        }
-        if (typeof node === 'object') {
-          Object.keys(node).forEach(function (key) {
-            walk(node[key], depth + 1);
-          });
-        }
-      }
-      walk(payload, 0);
-      if (!found.length) return [];
-      found.sort(function (a, b) { return b.length - a.length; });
-      return found[0];
-    }
-
-    function isoWeekInfo(dateStr) {
-      var d = new Date(dateStr + 'T00:00:00Z');
-      if (isNaN(d.getTime())) return null;
-      d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-      var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-      var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-      return {
-        key: d.getUTCFullYear() + '-W' + String(weekNo).padStart(2, '0'),
-        label: 'KW ' + weekNo + ' – ' + d.getUTCFullYear()
-      };
-    }
-
-    function buildWeekBuckets(days) {
-      var map = {};
-      (days || []).forEach(function (day) {
-        if (!day.date) return;
-        var info = isoWeekInfo(day.date);
-        if (!info) return;
-        if (!map[info.key]) {
-          map[info.key] = { key: info.key, label: info.label, start: day.date, end: day.date, count: 0 };
-        }
-        map[info.key].count += 1;
-        if (day.date < map[info.key].start) map[info.key].start = day.date;
-        if (day.date > map[info.key].end) map[info.key].end = day.date;
-      });
-      return Object.keys(map).map(function (key) { return map[key]; }).sort(function (a, b) {
-        return a.start < b.start ? -1 : 1;
-      });
-    }
-
-    function buildWeeklyTaskOverview(days) {
-      var out = { weeklyLog: [], futureLog: [], uncertain: [] };
-      (days || []).forEach(function (day) {
-        (day.migrations || []).forEach(function (mig) {
-          var item = {
-            date: mig.date || day.date || '',
-            text: mig.text || '',
-            direction: mig.direction || '',
-            sourceHorizon: mig.sourceHorizon || '',
-            targetHorizon: mig.targetHorizon || '',
-            targetLabel: mig.targetLabel || '',
-            id: mig.id || ''
-          };
-          if (!item.text) return;
-          if (item.targetHorizon === 'weekly_log') out.weeklyLog.push(item);
-          else if (item.targetHorizon === 'future_log') out.futureLog.push(item);
-          else out.uncertain.push(item);
-        });
-      });
-      return out;
-    }
-
-    function getDailyLogReadConfig() {
-      return {
-        gistId: (localStorage.getItem(DAILY_LOG_READ_GIST_ID_KEY) || '').trim(),
-        token: (localStorage.getItem(DAILY_LOG_READ_TOKEN_KEY) || '').trim()
-      };
-    }
-
-    function setDailyLogReadGistId(value) {
-      if ((value || '').trim()) localStorage.setItem(DAILY_LOG_READ_GIST_ID_KEY, value.trim());
-      else localStorage.removeItem(DAILY_LOG_READ_GIST_ID_KEY);
-      renderAll();
-      toast('Daily-Log-Gist-ID lokal gespeichert');
-    }
-
-    function setDailyLogReadToken(value) {
-      if ((value || '').trim()) localStorage.setItem(DAILY_LOG_READ_TOKEN_KEY, value.trim());
-      else localStorage.removeItem(DAILY_LOG_READ_TOKEN_KEY);
-      renderAll();
-      toast('Daily-Log-Read-Token lokal gespeichert');
-    }
-
-    function clearDailyLogReadConfig() {
-      var ok = confirm('Read-only-Konfiguration für die externe Daily-Log-Quelle wirklich lokal löschen?');
-      if (!ok) return;
-      localStorage.removeItem(DAILY_LOG_READ_GIST_ID_KEY);
-      localStorage.removeItem(DAILY_LOG_READ_TOKEN_KEY);
-      renderAll();
-      toast('Daily-Log-Read-Konfiguration gelöscht');
-    }
-
-    function dailyLogReadHeaders(token) {
-      var h = { 'Accept': 'application/vnd.github+json' };
-      if (token) h['Authorization'] = 'token ' + token;
-      return h;
-    }
-
-    function pickDailyLogReadFile(json) {
-      var files = json && json.files ? Object.keys(json.files).map(function (key) { return json.files[key]; }) : [];
-      if (!files.length) throw new Error('Keine Dateien im Daily-Log-Gist gefunden');
-      files.sort(function (a, b) {
-        var aScore = (/\.json$/i.test(a.filename || '') ? 2 : 0) + ((a.type || '').indexOf('json') !== -1 ? 2 : 0);
-        var bScore = (/\.json$/i.test(b.filename || '') ? 2 : 0) + ((b.type || '').indexOf('json') !== -1 ? 2 : 0);
-        if (aScore !== bScore) return bScore - aScore;
-        return (b.size || 0) - (a.size || 0);
-      });
-      return files[0];
-    }
-
-    function parseDailyLogPayloadFromFile(file) {
-      if (!file || !file.content) throw new Error('Daily-Log-Gist-Datei enthält keinen direkt lesbaren Inhalt');
-      return JSON.parse(file.content);
-    }
-
-    function getSelectedDailyLogDays(session) {
-      var days = (S.dailyLogReadCache && S.dailyLogReadCache.days) || [];
-      if (!days.length) return [];
-      var sel = session.dailyLogSelection || blankSession().dailyLogSelection;
-      if (sel.mode === 'range') {
-        return days.filter(function (day) {
-          if (!day.date) return false;
-          if (sel.rangeStart && day.date < sel.rangeStart) return false;
-          if (sel.rangeEnd && day.date > sel.rangeEnd) return false;
-          return true;
-        });
-      }
-      if (!sel.weekKey) return [];
-      return days.filter(function (day) {
-        var info = day.date ? isoWeekInfo(day.date) : null;
-        return info && info.key === sel.weekKey;
-      });
-    }
-
-    function getSelectedDailyLogLabel(session) {
-      var sel = session.dailyLogSelection || blankSession().dailyLogSelection;
-      if (sel.mode === 'range') {
-        return (sel.rangeStart || 'offen') + ' → ' + (sel.rangeEnd || 'offen');
-      }
-      var match = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === sel.weekKey; });
-      return match ? (match.label + ' (' + match.start + ' → ' + match.end + ')') : 'Keine Woche gewählt';
-    }
-
-    function ensureDailyLogWeekSelection(session) {
-      if (!session || !session.dailyLogSelection) return;
-      if (session.dailyLogSelection.mode !== 'week') return;
-      if (!session.dailyLogSelection.weekKey && S.dailyLogReadCache.weeks.length) {
-        session.dailyLogSelection.weekKey = S.dailyLogReadCache.weeks[0].key;
-      }
-    }
-
-    async function loadDailyLogFromGist() {
-      var cfg = getDailyLogReadConfig();
-      if (!cfg.gistId) {
-        toast('Bitte erst die Daily-Log-Gist-ID eintragen');
-        return;
-      }
-      try {
-        var res = await fetchWithTimeoutRetry(GIST_API_ROOT + encodeURIComponent(cfg.gistId), {
-          headers: dailyLogReadHeaders(cfg.token)
-        }, 15000, 1);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        var json = await res.json();
-        var file = pickDailyLogReadFile(json);
-        var payload = parseDailyLogPayloadFromFile(file);
-        var rawText = file.content;
-        var rawDays = extractDayArray(payload);
-        var days = rawDays.map(normalizeImportedDay).filter(function (day) {
-          return day.date || day.notes || day.tasks.length || day.events.length || day.migrations.length || day.quantText || day.annotations || day.bulletJournalRaw;
-        });
-        var weeks = buildWeekBuckets(days);
-        S.dailyLogReadCache = {
-          loadedAt: new Date().toISOString(),
-          gistId: cfg.gistId,
-          fileName: file.filename || '',
-          sourceKind: 'external_read_only_gist',
-          rawText: rawText,
-          days: days,
-          weeks: weeks
-        };
-        var session = getSession();
-        if (session) {
-          session.dailyLogReadMeta.loadedAt = S.dailyLogReadCache.loadedAt;
-          session.dailyLogReadMeta.sourceGistId = cfg.gistId;
-          session.dailyLogReadMeta.sourceFile = file.filename || '';
-          session.dailyLogReadMeta.sourceKind = 'external_read_only_gist';
-          ensureDailyLogWeekSelection(session);
-        }
-        save();
-        renderAll();
-        toast('Daily-Log-Daten read-only geladen');
-      } catch (e) {
-        alert('Fehler beim Lesen des externen Daily-Log-Gist: ' + ((e && e.message) || e));
-      }
-    }
-
-    function clearDailyLogCache() {
-      var ok = confirm('Geladene externe Daily-Log-Daten aus dem lokalen Weekly-Review-Cache entfernen?');
-      if (!ok) return;
-      S.dailyLogReadCache = {
-        loadedAt: '',
-        gistId: '',
-        fileName: '',
-        sourceKind: 'external_read_only_gist',
-        rawText: '',
-        days: [],
-        weeks: []
-      };
-      var session = getSession();
-      if (session) {
-        session.dailyLogReadMeta = blankSession().dailyLogReadMeta;
-        session.dailyLogSelection = blankSession().dailyLogSelection;
-        session.weeklyTaskOverview = blankSession().weeklyTaskOverview;
-      }
-      save();
-      renderAll();
-      toast('Daily-Log-Cache geleert');
-    }
-
-    function buildDailyNotesFromDays(days) {
-      var chunks = [];
-      (days || []).forEach(function (day) {
-        if (day.notes) chunks.push('# ' + (day.date || 'Ohne Datum') + '\n' + day.notes);
-      });
-      return chunks.join('\n\n');
-    }
-
-    function buildBulletJournalFromDays(days) {
-      var chunks = [];
-      (days || []).forEach(function (day) {
-        if (day.bulletJournalRaw) chunks.push('# ' + (day.date || 'Ohne Datum') + '\n' + day.bulletJournalRaw);
-      });
-      return chunks.join('\n\n');
-    }
-
-    function buildConvertedDaysFromDays(days) {
-      var chunks = [];
-      (days || []).forEach(function (day) {
-        if (!day.date && !day.notes && !day.tasks.length && !day.events.length && !day.migrations.length) return;
-        var block = [];
-        block.push('# ' + (day.date || 'Ohne Datum'));
-        if (day.events.length) {
-          block.push('## Ereignisse');
-          day.events.forEach(function (item) { block.push('- ' + item.text + (item.kind ? ' [' + item.kind + ']' : '')); });
-        }
-        if (day.tasks.length) {
-          block.push('## Aufgaben');
-          day.tasks.forEach(function (item) { block.push('- ' + item.text + (item.status ? ' [' + item.status + ']' : '')); });
-        }
-        if (day.migrations.length) {
-          block.push('## Migrationen');
-          day.migrations.forEach(function (item) {
-            block.push('- ' + (item.text || '—') + ' | Richtung: ' + (item.direction || '—') + ' | Zielhorizont: ' + (item.targetHorizon || '—') + ' | Ziel: ' + (item.targetLabel || '—'));
-          });
-        }
-        if (day.notes) {
-          block.push('## Notizen');
-          block.push(day.notes);
-        }
-        chunks.push(block.join('\n'));
-      });
-      return chunks.join('\n\n');
-    }
-
-    function buildAnnotationsFromDays(days) {
-      var chunks = [];
-      (days || []).forEach(function (day) {
-        if (day.annotations) chunks.push('# ' + (day.date || 'Ohne Datum') + '\n' + day.annotations);
-      });
-      return chunks.join('\n\n');
-    }
-
-    function buildQuantDataFromDays(days) {
-      var chunks = [];
-      (days || []).forEach(function (day) {
-        if (day.quantText) chunks.push('# ' + (day.date || 'Ohne Datum') + '\n' + day.quantText);
-      });
-      return chunks.join('\n\n');
-    }
-
-    function buildMigratedTasksFromDays(days) {
-      var overview = buildWeeklyTaskOverview(days);
-      var lines = [];
-      lines.push('Weekly Log – kurzfristig / konkret');
-      if (overview.weeklyLog.length) overview.weeklyLog.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · ' + (item.targetLabel || item.targetHorizon || '—')); });
-      else lines.push('- Keine robust ableitbaren Einträge');
-      lines.push('');
-      lines.push('Future Log – unspezifische Zukunft');
-      if (overview.futureLog.length) overview.futureLog.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · ' + (item.targetLabel || item.targetHorizon || '—')); });
-      else lines.push('- Keine robust ableitbaren Einträge');
-      if (overview.uncertain.length) {
-        lines.push('');
-        lines.push('Unklare Zielhorizonte');
-        overview.uncertain.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · ' + (item.targetLabel || item.targetHorizon || 'unbekannt')); });
-      }
-      return lines.join('\n');
-    }
-
-    function applySelectedDailyLogWeekToSession() {
-      var session = getSession();
-      if (!session) return;
-      var days = getSelectedDailyLogDays(session);
-      if (!days.length) {
-        toast('Keine Daily-Log-Tage für die aktuelle Auswahl gefunden');
-        return;
-      }
-      var dailyNotes = buildDailyNotesFromDays(days);
-      var bulletRaw = buildBulletJournalFromDays(days);
-      var converted = buildConvertedDaysFromDays(days);
-      var annotations = buildAnnotationsFromDays(days);
-      var quantData = buildQuantDataFromDays(days);
-      var migrated = buildMigratedTasksFromDays(days);
-      if (dailyNotes) session.dailyNotesRaw = dailyNotes;
-      if (bulletRaw) session.bulletJournalRaw = bulletRaw;
-      if (converted) session.convertedDays = converted;
-      if (annotations) session.annotations = annotations;
-      if (quantData) session.quantData = quantData;
-      if (migrated) session.migratedTasks = migrated;
-      session.weeklyTaskOverview = buildWeeklyTaskOverview(days);
-      session.dailyLogReadMeta.loadedAt = S.dailyLogReadCache.loadedAt || session.dailyLogReadMeta.loadedAt;
-      session.dailyLogReadMeta.sourceGistId = S.dailyLogReadCache.gistId || session.dailyLogReadMeta.sourceGistId;
-      session.dailyLogReadMeta.sourceFile = S.dailyLogReadCache.fileName || session.dailyLogReadMeta.sourceFile;
-      session.dailyLogReadMeta.sourceKind = 'external_read_only_gist';
-      session.dailyLogReadMeta.lastAppliedAt = new Date().toISOString();
-      session.dailyLogReadMeta.selectedLabel = getSelectedDailyLogLabel(session);
-      save();
-      renderAll();
-      toast('Gewählte Daily-Log-Woche in die Session übernommen');
-    }
-
-    function renderDailyLogSourceHTML(session) {
-      var cfg = getDailyLogReadConfig();
-      var cache = S.dailyLogReadCache || { days: [], weeks: [] };
-      return `
-        <div class="notice info">Diese Anbindung ist strikt read-only. Sie liest Daily-Log-Daten aus einem separaten Gist per <code>GET</code> und schreibt nie in diese Quelle zurück.</div>
-        <label>Daily-Log-Gist-ID</label>
-        <input value="${esc(cfg.gistId)}" onchange="setDailyLogReadGistId(this.value)" placeholder="Externe Gist-ID der Daily-Log-App" />
-        <label>Optionaler Daily-Log-Read-Token</label>
-        <input type="password" value="${esc(cfg.token)}" onchange="setDailyLogReadToken(this.value)" placeholder="Nur falls das externe Gist nicht öffentlich lesbar ist" />
-        <div class="btn-row" style="margin-top:12px">
-          <button class="btn btn-s" onclick="loadDailyLogFromGist()">Externe Daten laden</button>
-          <button class="btn btn-d" onclick="clearDailyLogCache()">Geladene Daten entfernen</button>
-          <button class="btn btn-m" onclick="clearDailyLogReadConfig()">Read-only-Konfig löschen</button>
-        </div>
-        <div class="small" style="margin-top:12px">Quelle: <strong>${esc(session.dailyLogReadMeta.sourceKind || 'external_read_only_gist')}</strong></div>
-        <div class="kv" style="margin-top:12px"><div class="k">Geladen am</div><div>${esc(cache.loadedAt ? new Date(cache.loadedAt).toLocaleString('de-DE') : '—')}</div></div>
-        <div class="kv"><div class="k">Gist</div><div>${esc(cache.gistId || '—')}</div></div>
-        <div class="kv"><div class="k">Datei</div><div>${esc(cache.fileName || '—')}</div></div>
-        <div class="kv"><div class="k">Tage im Cache</div><div>${cache.days ? cache.days.length : 0}</div></div>
-      `;
-    }
-
-    function renderDailyLogSelectionHTML(session) {
-      var cache = S.dailyLogReadCache || { days: [], weeks: [] };
-      if (!cache.days.length) {
-        return '<div class="small">Noch keine externen Daily-Log-Daten geladen.</div>';
-      }
-      ensureDailyLogWeekSelection(session);
-      var weekOptions = cache.weeks.map(function (week) {
-        var label = week.label + ' (' + week.start + ' → ' + week.end + ', ' + week.count + ' Tage)';
-        return '<option value="' + esc(week.key) + '" ' + (session.dailyLogSelection.weekKey === week.key ? 'selected' : '') + '>' + esc(label) + '</option>';
-      }).join('');
-      return `
-        <label>Auswahlmodus</label>
-        <select onchange="patchDailyLogSelection('mode', this.value)">
-          <option value="week" ${session.dailyLogSelection.mode === 'week' ? 'selected' : ''}>Kalenderwoche</option>
-          <option value="range" ${session.dailyLogSelection.mode === 'range' ? 'selected' : ''}>Datumsbereich</option>
-        </select>
-        ${session.dailyLogSelection.mode === 'week' ? `
-          <label>Woche</label>
-          <select onchange="patchDailyLogSelection('weekKey', this.value)">${weekOptions}</select>
-        ` : `
-          <label>Startdatum</label>
-          <input type="date" value="${esc(session.dailyLogSelection.rangeStart || '')}" onchange="patchDailyLogSelection('rangeStart', this.value)" />
-          <label>Enddatum</label>
-          <input type="date" value="${esc(session.dailyLogSelection.rangeEnd || '')}" onchange="patchDailyLogSelection('rangeEnd', this.value)" />
-        `}
-        <div class="small" style="margin-top:12px">Aktuelle Auswahl: <strong>${esc(getSelectedDailyLogLabel(session))}</strong></div>
-        <div class="btn-row" style="margin-top:12px">
-          <button class="btn btn-v" onclick="applySelectedDailyLogWeekToSession()">Auswahl in Session-Felder übernehmen</button>
-        </div>
-      `;
-    }
-
-    function renderDailyLogPreviewHTML(session) {
-      var days = getSelectedDailyLogDays(session);
-      if (!days.length) {
-        return '<div class="small">Für die aktuelle Auswahl liegen keine robust erkannten Daily-Log-Tage vor.</div>';
-      }
-      return `
-        <div class="small" style="margin-bottom:10px">Quelle: ${esc(session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—')} · Datei: ${esc(session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—')}</div>
-        <div class="small" style="margin-bottom:10px">Auswahl: <strong>${esc(getSelectedDailyLogLabel(session))}</strong></div>
-        <table class="table-lite">
-          <tr><th>Datum</th><th>Notizen</th><th>Aufgaben</th><th>Ereignisse</th><th>Migrationen</th></tr>
-          ${days.map(function (day) {
-            return '<tr>' +
-              '<td>' + esc(day.date || '—') + '</td>' +
-              '<td>' + (day.notes ? 'ja' : '—') + '</td>' +
-              '<td>' + day.tasks.length + '</td>' +
-              '<td>' + day.events.length + '</td>' +
-              '<td>' + day.migrations.length + '</td>' +
-            '</tr>';
-          }).join('')}
-        </table>
-        <div class="notice" style="margin-top:12px">Felder ohne robuste Ableitung werden beim Übernehmen nicht künstlich erfunden. Sie bleiben leer oder unverändert.</div>
-      `;
-    }
-
-    function renderTaskOverviewTable(items, emptyText) {
-      if (!items || !items.length) return '<div class="small">' + esc(emptyText) + '</div>';
-      return `
-        <table class="table-lite">
-          <tr><th>Datum</th><th>Aufgabe</th><th>Richtung</th><th>Ziel</th></tr>
-          ${items.map(function (item) {
-            return '<tr>' +
-              '<td>' + esc(item.date || '—') + '</td>' +
-              '<td>' + esc(item.text || '—') + '</td>' +
-              '<td>' + esc(item.direction || '—') + '</td>' +
-              '<td>' + esc(item.targetLabel || item.targetHorizon || '—') + '</td>' +
-            '</tr>';
-          }).join('')}
-        </table>
-      `;
-    }
-
-    function renderWeeklyTaskOverviewHTML(session) {
-      var days = getSelectedDailyLogDays(session);
-      var overview = buildWeeklyTaskOverview(days);
-      return `
-        <div class="notice">Die Trennung erfolgt nur, wenn der Zielhorizont aus den gelesenen Daily-Log-Daten robust hervorgeht.</div>
-        <div class="qh" style="margin-top:0">Kurzfristig / konkret weitergeführt</div>
-        ${renderTaskOverviewTable(overview.weeklyLog, 'Keine robust als Weekly Log erkennbaren Migrationen in der Auswahl.')}
-        <div class="qh" style="margin-top:14px">In unspezifische Zukunft verschoben</div>
-        ${renderTaskOverviewTable(overview.futureLog, 'Keine robust als Future Log erkennbaren Migrationen in der Auswahl.')}
-        <div class="qh" style="margin-top:14px">Nicht sicher genug ableitbar</div>
-        ${renderTaskOverviewTable(overview.uncertain, 'Keine unklaren Horizonte.')}
-      `;
-    }
-
-    function buildWeeklyTaskOverviewPromptText(session) {
-      var overview = session.weeklyTaskOverview || { weeklyLog: [], futureLog: [], uncertain: [] };
-      var lines = [];
-      lines.push('WOCHENÜBERSICHT MIGRIERTER AUFGABEN');
-      lines.push('');
-      lines.push('Kurzfristig / konkret weitergeführt (Weekly Log):');
-      if (overview.weeklyLog.length) overview.weeklyLog.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · Richtung: ' + (item.direction || '—') + ' · Ziel: ' + (item.targetLabel || item.targetHorizon || '—')); });
-      else lines.push('- Keine robust ableitbaren Einträge');
-      lines.push('');
-      lines.push('In unspezifische Zukunft verschoben (Future Log):');
-      if (overview.futureLog.length) overview.futureLog.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · Richtung: ' + (item.direction || '—') + ' · Ziel: ' + (item.targetLabel || item.targetHorizon || '—')); });
-      else lines.push('- Keine robust ableitbaren Einträge');
-      lines.push('');
-      lines.push('Nicht sicher genug ableitbar:');
-      if (overview.uncertain.length) overview.uncertain.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · Ziel: ' + (item.targetLabel || item.targetHorizon || 'unbekannt')); });
-      else lines.push('- Keine unklaren Horizonte');
-      return lines.join('\n');
-    }
-
-    function buildSelectedDailyLogPromptText(session) {
-      var days = getSelectedDailyLogDays(session);
-      if (!days.length) return 'KEINE AUSWAHL ODER KEINE ROBUST ERKANNTEN DAILY-LOG-TAGE AUS DER EXTERNEN READ-ONLY-QUELLE.';
-      var lines = [];
-      lines.push('EXTERNE DAILY-LOG-READ-ONLY-QUELLE');
-      lines.push('Quelle: ' + (session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—'));
-      lines.push('Datei: ' + (session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—'));
-      lines.push('Geladen am: ' + (session.dailyLogReadMeta.loadedAt || S.dailyLogReadCache.loadedAt || '—'));
-      lines.push('Auswahl: ' + getSelectedDailyLogLabel(session));
-      lines.push('');
-      days.forEach(function (day) {
-        lines.push('# ' + (day.date || 'Ohne Datum'));
-        if (day.notes) lines.push('Notizen: ' + day.notes);
-        if (day.events.length) {
-          lines.push('Ereignisse:');
-          day.events.forEach(function (item) { lines.push('- ' + item.text + (item.kind ? ' [' + item.kind + ']' : '')); });
-        }
-        if (day.tasks.length) {
-          lines.push('Aufgaben:');
-          day.tasks.forEach(function (item) { lines.push('- ' + item.text + (item.status ? ' [' + item.status + ']' : '')); });
-        }
-        if (day.migrations.length) {
-          lines.push('Migrationen:');
-          day.migrations.forEach(function (item) { lines.push('- ' + item.text + ' | Richtung: ' + (item.direction || '—') + ' | Zielhorizont: ' + (item.targetHorizon || '—') + ' | Ziel: ' + (item.targetLabel || '—')); });
-        }
-        if (day.quantText) lines.push('Quant-Daten: ' + day.quantText);
-        if (day.annotations) lines.push('Annotationen: ' + day.annotations);
-        lines.push('');
-      });
-      return lines.join('\n');
     }
 
     function buildPromptText(type, session) {
@@ -1943,7 +1168,7 @@
           'Ordne meine quantitativen Wochen-Daten so vor, dass sie später in die Weekly Review eingespeist werden können.',
           '',
           'INPUT',
-          session.quantData || 'Keine quantitativen Daten hinterlegt.',
+          session.quantData || 'Noch keine quantitativen Daten eingefügt.',
           '',
           'REGELN',
           '- Nur strukturieren und lesbar machen.',
@@ -1968,29 +1193,24 @@
           shared,
           '',
           'AUFGABE',
-          'Hilf mir, Aufgaben aus dem Bullet Journal und aus der externen Daily-Log-Read-only-Quelle in eine klare Migrationssicht zu überführen.',
+          'Hilf mir, Aufgaben aus dem Bullet Journal in eine klare Migrationsliste zu überführen.',
           '',
-          'INPUT – MANUELL',
+          'INPUT',
           (session.migratedTasks || session.bulletJournalRaw || 'Noch kein Aufgabenmaterial eingefügt.'),
           '',
-          buildSelectedDailyLogPromptText(session),
-          '',
-          buildWeeklyTaskOverviewPromptText(session),
-          '',
           'REGELN',
-          '- Weekly Log und Future Log strikt getrennt halten.',
-          '- Nur explizit ableitbare Migrationen als Migration behandeln.',
-          '- Wenn der Zielhorizont unklar ist, das explizit markieren statt raten.',
+          '- Verb + Objekt.',
+          '- Ein Schritt = eine atomare Handlung.',
+          '- Vage Sammelprojekte zerlegen.',
           '- Aufgaben, Ereignisse und Notizen sauber trennen.',
           '',
           'ZUSATZ',
           sessionStepNotes('migrate_tasks') || 'Kein Zusatz.',
           '',
           'AUSGABEFORMAT',
-          '1. Kurzfristig / konkret weitergeführte Aufgaben',
-          '2. In unspezifische Zukunft verschobene Aufgaben',
-          '3. Nicht sicher genug ableitbare Fälle',
-          '4. Dinge, die keine Aufgabe sind'
+          '1. Sofort migrierbare Aufgaben',
+          '2. Zu große / unklare Aufgaben mit Zerlegungsvorschlag',
+          '3. Dinge, die keine Aufgabe sind'
         ].join('\n');
       }
 
@@ -2048,17 +1268,12 @@
           'Migrierte Aufgaben:',
           session.migratedTasks || '—',
           '',
-          buildSelectedDailyLogPromptText(session),
-          '',
-          buildWeeklyTaskOverviewPromptText(session),
-          '',
           'REGELN',
           '- Markiere fehlende Tage oder Unklarheiten, bevor du interpretierst.',
           '- Trenne strikt Beobachtung, Interpretation und Entscheidung.',
           '- Wenn etwas nicht aus den Inputs hervorgeht, kennzeichne es als unsicher statt zu raten.',
           '- Integriere quantitative Daten nur dort, wo sie wirklich etwas stützen.',
-          '- Weekly Log und Future Log nicht vermischen.',
-          '- Wenn die Datenlage für einen Migrationshorizont nicht robust ist, markiere das explizit.',
+          '- Die Review darf konkret werden, aber nicht in chaotische To-do-Listen kippen.',
           '',
           'ZUSATZ',
           sessionStepNotes('write_current_weekly_review') || 'Kein Zusatz.',
@@ -2068,8 +1283,7 @@
           '2. Interpretationen / Muster',
           '3. Entscheidungen / Konsequenzen',
           '4. Was nächste Woche besondere Aufmerksamkeit braucht',
-          '5. Getrennte Sicht auf kurzfristige Planung und unspezifische Zukunft',
-          '6. Optional: Fokusfelder, Deadlines, handhabbare nächste Schritte'
+          '5. Optional: Fokusfelder, Deadlines, handhabbare nächste Schritte'
         ].join('\n');
       }
 
@@ -2229,11 +1443,6 @@
       S = deepClone(payload.S);
       if (!Array.isArray(S.sessions)) S.sessions = [];
       if (!S.currentTab) S.currentTab = 'dashboard';
-      if (!S.dailyLogReadCache) {
-        S.dailyLogReadCache = {
-          loadedAt: '', gistId: '', fileName: '', sourceKind: 'external_read_only_gist', rawText: '', days: [], weeks: []
-        };
-      }
       if (!S.sessions.length) {
         var first = blankSession();
         S.sessions = [first];
@@ -2307,12 +1516,6 @@
         merged.currentSessionId = first.id;
       } else if (!merged.sessions.find(function (session) { return session.id === merged.currentSessionId; })) {
         merged.currentSessionId = merged.sessions[0].id;
-      }
-
-      if (!merged.dailyLogReadCache) {
-        merged.dailyLogReadCache = {
-          loadedAt: '', gistId: '', fileName: '', sourceKind: 'external_read_only_gist', rawText: '', days: [], weeks: []
-        };
       }
 
       return merged;
@@ -2500,8 +1703,6 @@
       lines.push('- Review-Datum: ' + (session.reviewDate || '—'));
       lines.push('- Letzter Weekly Log: ' + (session.lastWeeklyLogUrl || '—'));
       lines.push('- Fokus: ' + (session.currentFocus || '—'));
-      lines.push('- Externe Daily-Log-Quelle: ' + (session.dailyLogReadMeta.sourceGistId || '—'));
-      lines.push('- Daily-Log-Auswahl: ' + (session.dailyLogReadMeta.selectedLabel || getSelectedDailyLogLabel(session) || '—'));
       lines.push('');
       lines.push('## Schrittstatus');
       DEFAULT_STEPS.forEach(function (def) {
@@ -2518,7 +1719,6 @@
         ['Anmerkungen', session.annotations],
         ['Quantitative Daten', session.quantData],
         ['Migrierte Aufgaben', session.migratedTasks],
-        ['Migrationshorizonte', buildWeeklyTaskOverviewPromptText(session)],
         ['Vorheriger Weekly-Log-Kontext', session.previousWeeklyLogSummary],
         ['Review-Ergebnis', session.reviewResult],
         ['Nächste Woche', session.nextWeekPreview]
