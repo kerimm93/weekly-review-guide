@@ -536,6 +536,7 @@
 
   <div id="toast"></div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script>
     var LKEY = 'weekly_review_orchestrator_v1';
     var GIST_FILE = 'weekly_review_orchestrator_data.json';
@@ -1027,6 +1028,11 @@
             </div>
 
             <div class="qs">
+              <div class="qh">Kompakte Wochenübersicht (Lesansicht)</div>
+              ${renderCompactWeeklyReviewHTML(session)}
+            </div>
+
+            <div class="qs">
               <div class="qh">Migrationshorizonte der gewählten Woche</div>
               ${migrationHtml}
             </div>
@@ -1273,6 +1279,39 @@
       var migrations = asArray(firstNonEmpty(day.migrations, day.taskMigrations, day.movedTasks, day.migrationLog, [])).map(function (item) {
         return normalizeMigrationItem(item, date);
       }).filter(function (item) { return item.text || item.targetHorizon; });
+      var rawCards = asArray(firstNonEmpty(day.rawCards, day.cards, [])).map(function (card) {
+        var base = normalizeLooseItem(card);
+        return {
+          id: firstNonEmpty(base.id, base.cardId, ''),
+          type: firstNonEmpty(base.type, base.typ, ''),
+          time: firstNonEmpty(base.time, base.zeit, ''),
+          text: firstNonEmpty(base.text, base.sourceQuote, ''),
+          processed: !!base.processed
+        };
+      }).filter(function (item) { return item.text || item.type || item.time; });
+      var objects = asArray(firstNonEmpty(day.objects, day.extractedObjects, [])).map(function (obj) {
+        var base = normalizeLooseItem(obj);
+        return {
+          id: firstNonEmpty(base.id, base.objectId, ''),
+          type: firstNonEmpty(base.typ, base.type, ''),
+          text: firstNonEmpty(base.text, base.sourceQuote, ''),
+          status: firstNonEmpty(base.status, base.state, ''),
+          done: !!base.done,
+          horizon: normalizeHorizon(firstNonEmpty(base.horizon, base.targetHorizon, base.destination, base.to, '')),
+          cardId: firstNonEmpty(base.cardId, base.sourceCardId, ''),
+          context: firstNonEmpty(base.kontext, base.context, '')
+        };
+      }).filter(function (item) { return item.text || item.type; });
+      var feedItems = asArray(firstNonEmpty(day.feedItems, day.feed, [])).map(function (item) {
+        var base = normalizeLooseItem(item);
+        return {
+          id: firstNonEmpty(base.id, base.feedId, ''),
+          type: firstNonEmpty(base.type, base.typ, base.source, ''),
+          text: firstNonEmpty(base.text, base.title, base.description, ''),
+          source: firstNonEmpty(base.source, base.provider, ''),
+          time: firstNonEmpty(base.time, base.createdAt, base.publishedAt, '')
+        };
+      }).filter(function (item) { return item.text || item.type; });
       return {
         date: date,
         title: firstNonEmpty(day.title, day.label, ''),
@@ -1282,7 +1321,13 @@
         quantText: collectQuantText(day),
         tasks: tasks,
         events: events,
-        migrations: migrations
+        migrations: migrations,
+        reviewDone: !!day.reviewDone,
+        closedAt: firstNonEmpty(day.closedAt, ''),
+        plan: firstNonEmpty(day.plan, null),
+        rawCards: rawCards,
+        objects: objects,
+        feedItems: feedItems
       };
     }
 
@@ -1458,6 +1503,93 @@
       }
     }
 
+    function getDailyLogZipFileInput() {
+      return document.getElementById('dailyLogZipInput');
+    }
+
+    function pickDailyLogDateFromPath(path) {
+      var m = String(path || '').match(/days\/(\d{4}-\d{2}-\d{2})\.json$/i);
+      return m ? m[1] : '';
+    }
+
+    async function parseDailyLogZip(file) {
+      if (!file) throw new Error('Keine ZIP-Datei ausgewählt');
+      if (typeof JSZip === 'undefined') throw new Error('JSZip ist nicht verfügbar');
+      var zip = await JSZip.loadAsync(file);
+      var dayEntries = [];
+      zip.forEach(function (relativePath, zipEntry) {
+        if (zipEntry.dir) return;
+        if (/^days\/[^/]+\.json$/i.test(relativePath)) dayEntries.push(zipEntry);
+      });
+      if (!dayEntries.length) throw new Error('ZIP enthält keine days/*.json-Dateien');
+      var byDate = {};
+      for (var i = 0; i < dayEntries.length; i++) {
+        var entry = dayEntries[i];
+        try {
+          var raw = await entry.async('string');
+          var json = JSON.parse(raw);
+          if (!json || typeof json !== 'object') continue;
+          if (!json.date) json.date = pickDailyLogDateFromPath(entry.name);
+          var normalized = normalizeImportedDay(json);
+          if (!normalized.date) continue;
+          byDate[normalized.date] = normalized;
+        } catch (e) {}
+      }
+      var todayEntry = zip.file('today.json');
+      if (todayEntry) {
+        try {
+          var todayRaw = await todayEntry.async('string');
+          var todayJson = JSON.parse(todayRaw);
+          if (todayJson && typeof todayJson === 'object') {
+            var todayNorm = normalizeImportedDay(todayJson);
+            if (todayNorm.date && !byDate[todayNorm.date]) byDate[todayNorm.date] = todayNorm;
+          }
+        } catch (e) {}
+      }
+      var days = Object.keys(byDate).sort().map(function (date) { return byDate[date]; }).filter(function (day) {
+        return day.date || day.notes || day.tasks.length || day.events.length || day.migrations.length || day.quantText || day.annotations || day.bulletJournalRaw || day.rawCards.length || day.objects.length;
+      });
+      if (!days.length) throw new Error('Keine nutzbaren Tage aus ZIP extrahiert');
+      return {
+        days: days,
+        weeks: buildWeekBuckets(days)
+      };
+    }
+
+    async function loadDailyLogFromZip() {
+      var input = getDailyLogZipFileInput();
+      var file = input && input.files && input.files[0] ? input.files[0] : null;
+      if (!file) {
+        toast('Bitte zuerst eine ZIP-Datei wählen');
+        return;
+      }
+      try {
+        var parsed = await parseDailyLogZip(file);
+        S.dailyLogReadCache = {
+          loadedAt: new Date().toISOString(),
+          gistId: '',
+          fileName: file.name || 'dailylog.zip',
+          sourceKind: 'zip_import',
+          rawText: '',
+          days: parsed.days,
+          weeks: parsed.weeks
+        };
+        var session = getSession();
+        if (session) {
+          session.dailyLogReadMeta.loadedAt = S.dailyLogReadCache.loadedAt;
+          session.dailyLogReadMeta.sourceGistId = '';
+          session.dailyLogReadMeta.sourceFile = S.dailyLogReadCache.fileName;
+          session.dailyLogReadMeta.sourceKind = 'zip_import';
+          ensureDailyLogWeekSelection(session);
+        }
+        save();
+        renderAll();
+        toast('Daily-Log-ZIP erfolgreich geladen');
+      } catch (e) {
+        alert('Fehler beim ZIP-Import: ' + ((e && e.message) || e));
+      }
+    }
+
     function getSelectedDailyLogDays(session) {
       var days = (S.dailyLogReadCache && S.dailyLogReadCache.days) || [];
       if (!days.length) return [];
@@ -1515,7 +1647,7 @@
           throw new Error('Keine Daily-Log-Tagesdaten erkannt (erwartet z. B. days, dailyLogs oder entries)');
         }
         var days = rawDays.map(normalizeImportedDay).filter(function (day) {
-          return day.date || day.notes || day.tasks.length || day.events.length || day.migrations.length || day.quantText || day.annotations || day.bulletJournalRaw;
+          return day.date || day.notes || day.tasks.length || day.events.length || day.migrations.length || day.quantText || day.annotations || day.bulletJournalRaw || day.rawCards.length || day.objects.length || day.feedItems.length;
         });
         var weeks = buildWeekBuckets(days);
         S.dailyLogReadCache = {
@@ -1532,7 +1664,7 @@
           session.dailyLogReadMeta.loadedAt = S.dailyLogReadCache.loadedAt;
           session.dailyLogReadMeta.sourceGistId = cfg.gistId;
           session.dailyLogReadMeta.sourceFile = file.filename || '';
-          session.dailyLogReadMeta.sourceKind = 'external_read_only_gist';
+          session.dailyLogReadMeta.sourceKind = S.dailyLogReadCache.sourceKind || 'external_read_only_gist';
           ensureDailyLogWeekSelection(session);
         }
         save();
@@ -1667,9 +1799,9 @@
       if (migrated) session.migratedTasks = migrated;
       session.weeklyTaskOverview = buildWeeklyTaskOverview(days);
       session.dailyLogReadMeta.loadedAt = S.dailyLogReadCache.loadedAt || session.dailyLogReadMeta.loadedAt;
-      session.dailyLogReadMeta.sourceGistId = S.dailyLogReadCache.gistId || session.dailyLogReadMeta.sourceGistId;
+      session.dailyLogReadMeta.sourceGistId = S.dailyLogReadCache.gistId || '';
       session.dailyLogReadMeta.sourceFile = S.dailyLogReadCache.fileName || session.dailyLogReadMeta.sourceFile;
-      session.dailyLogReadMeta.sourceKind = 'external_read_only_gist';
+      session.dailyLogReadMeta.sourceKind = S.dailyLogReadCache.sourceKind || 'external_read_only_gist';
       session.dailyLogReadMeta.lastAppliedAt = new Date().toISOString();
       session.dailyLogReadMeta.selectedLabel = getSelectedDailyLogLabel(session);
       save();
@@ -1681,7 +1813,7 @@
       var cfg = getDailyLogReadConfig();
       var cache = S.dailyLogReadCache || { days: [], weeks: [] };
       return `
-        <div class="notice info">Diese Anbindung ist strikt read-only. Sie liest Daily-Log-Daten aus einem separaten Gist per <code>GET</code> und schreibt nie in diese Quelle zurück.</div>
+        <div class="notice info">Diese Anbindung bleibt strikt read-only. Du kannst Daily-Log-Daten entweder per <code>GET</code> aus einem separaten Gist laden oder lokal ein ZIP importieren. Es gibt keinen Schreibzugriff auf externe Quellen.</div>
         <label>Daily-Log-Gist-ID</label>
         <input value="${esc(cfg.gistId)}" onchange="setDailyLogReadGistId(this.value)" placeholder="Externe Gist-ID der Daily-Log-App" />
         <label>Optionaler Daily-Log-Read-Token</label>
@@ -1691,9 +1823,14 @@
           <button class="btn btn-d" onclick="clearDailyLogCache()">Geladene Daten entfernen</button>
           <button class="btn btn-m" onclick="clearDailyLogReadConfig()">Read-only-Konfig löschen</button>
         </div>
-        <div class="small" style="margin-top:12px">Quelle: <strong>${esc(session.dailyLogReadMeta.sourceKind || 'external_read_only_gist')}</strong></div>
+        <label style="margin-top:16px">Daily-Log-ZIP (Export)</label>
+        <input id="dailyLogZipInput" type="file" accept=".zip,application/zip" />
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn btn-t" onclick="loadDailyLogFromZip()">ZIP einlesen</button>
+        </div>
+        <div class="small" style="margin-top:12px">Quelle: <strong>${esc(session.dailyLogReadMeta.sourceKind || cache.sourceKind || 'external_read_only_gist')}</strong></div>
         <div class="kv" style="margin-top:12px"><div class="k">Geladen am</div><div>${esc(cache.loadedAt ? new Date(cache.loadedAt).toLocaleString('de-DE') : '—')}</div></div>
-        <div class="kv"><div class="k">Gist</div><div>${esc(cache.gistId || '—')}</div></div>
+        <div class="kv"><div class="k">Quelle-ID</div><div>${esc(cache.gistId || '—')}</div></div>
         <div class="kv"><div class="k">Datei</div><div>${esc(cache.fileName || '—')}</div></div>
         <div class="kv"><div class="k">Tage im Cache</div><div>${cache.days ? cache.days.length : 0}</div></div>
       `;
@@ -1737,7 +1874,7 @@
         return '<div class="small">Für die aktuelle Auswahl liegen keine robust erkannten Daily-Log-Tage vor.</div>';
       }
       return `
-        <div class="small" style="margin-bottom:10px">Quelle: ${esc(session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—')} · Datei: ${esc(session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—')}</div>
+        <div class="small" style="margin-bottom:10px">Quelle: ${esc(session.dailyLogReadMeta.sourceKind || S.dailyLogReadCache.sourceKind || 'external_read_only_gist')} · ID: ${esc(session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—')} · Datei: ${esc(session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—')}</div>
         <div class="small" style="margin-bottom:10px">Auswahl: <strong>${esc(getSelectedDailyLogLabel(session))}</strong></div>
         <table class="table-lite">
           <tr><th>Datum</th><th>Notizen</th><th>Aufgaben</th><th>Ereignisse</th><th>Migrationen</th></tr>
@@ -1753,6 +1890,42 @@
         </table>
         <div class="notice" style="margin-top:12px">Felder ohne robuste Ableitung werden beim Übernehmen nicht künstlich erfunden. Sie bleiben leer oder unverändert.</div>
       `;
+    }
+
+    function compactList(list, max) {
+      return (list || []).slice(0, max || 3).map(function (item) { return item.text || ''; }).filter(Boolean);
+    }
+
+    function buildCompactDaySignals(day) {
+      var qualitative = [];
+      if (day.notes) qualitative.push(day.notes);
+      compactList(day.feedItems, 2).forEach(function (txt) { qualitative.push(txt); });
+      compactList(day.objects, 3).forEach(function (txt) { qualitative.push(txt); });
+      if (day.plan && typeof day.plan === 'object' && day.plan.intentionen) qualitative.push('Plan: ' + day.plan.intentionen);
+      return qualitative.slice(0, 4);
+    }
+
+    function renderCompactWeeklyReviewHTML(session) {
+      var days = getSelectedDailyLogDays(session);
+      if (!days.length) return '<div class="small">Keine Tage für die kompakte Wochenübersicht gewählt.</div>';
+      var rows = days.map(function (day) {
+        var sig = buildCompactDaySignals(day);
+        var openTasks = (day.tasks || []).filter(function (task) { return !task.done && String(task.status || '').toLowerCase() !== 'done'; });
+        var objectTasks = (day.objects || []).filter(function (obj) {
+          var t = String(obj.type || '').toLowerCase();
+          return t === 'aufgabe' || t === 'task' || t === 'todo';
+        });
+        return `
+          <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:rgba(0,0,0,.18)">
+            <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>${esc(day.date || 'Ohne Datum')}</strong><span class="small">reviewDone: ${day.reviewDone ? 'ja' : 'nein'} · closedAt: ${esc(day.closedAt || '—')}</span></div>
+            ${sig.length ? `<div class="small" style="margin-top:6px"><strong>Qualitativ:</strong> ${esc(sig.join(' | '))}</div>` : ''}
+            <div class="small" style="margin-top:6px"><strong>Signale:</strong> Cards ${day.rawCards.length} · Objects ${day.objects.length} · Feed ${day.feedItems.length}</div>
+            <div class="small" style="margin-top:6px"><strong>Offene Aufgaben:</strong> ${openTasks.length || objectTasks.length ? esc(compactList(openTasks, 2).concat(compactList(objectTasks, 2)).slice(0, 3).join(' | ')) : 'keine klar offenen Marker'}</div>
+            <div class="small" style="margin-top:6px"><strong>Migrationen:</strong> ${day.migrations.length ? esc(day.migrations.map(function (m) { return (m.text || '—') + ' → ' + (m.targetLabel || m.targetHorizon || '—'); }).slice(0, 3).join(' | ')) : '—'}</div>
+          </div>
+        `;
+      }).join('');
+      return '<div class="notice">Kompakte Leseansicht für 10–15 Minuten Review-Vorbereitung mit Fokus auf qualitative Signale, offene Aufgaben und Migrationen.</div>' + rows;
     }
 
     function renderTaskOverviewTable(items, emptyText) {
@@ -1807,13 +1980,21 @@
 
     function buildSelectedDailyLogPromptText(session) {
       var days = getSelectedDailyLogDays(session);
-      if (!days.length) return 'KEINE AUSWAHL ODER KEINE ROBUST ERKANNTEN DAILY-LOG-TAGE AUS DER EXTERNEN READ-ONLY-QUELLE.';
+      if (!days.length) return 'KEINE AUSWAHL ODER KEINE ROBUST ERKANNTEN DAILY-LOG-TAGE AUS DER READ-ONLY-QUELLE (GIST ODER ZIP-IMPORT).';
       var lines = [];
-      lines.push('EXTERNE DAILY-LOG-READ-ONLY-QUELLE');
-      lines.push('Quelle: ' + (session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—'));
+      lines.push('DAILY-LOG-READ-ONLY-QUELLE (GIST ODER ZIP-IMPORT)');
+      lines.push('Quelle-Typ: ' + (session.dailyLogReadMeta.sourceKind || S.dailyLogReadCache.sourceKind || 'external_read_only_gist'));
+      lines.push('Quelle-ID: ' + (session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—'));
       lines.push('Datei: ' + (session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—'));
       lines.push('Geladen am: ' + (session.dailyLogReadMeta.loadedAt || S.dailyLogReadCache.loadedAt || '—'));
       lines.push('Auswahl: ' + getSelectedDailyLogLabel(session));
+      lines.push('');
+      lines.push('');
+      lines.push('KOMPAKTE WOCHENLESANSICHT (10-15 MIN)');
+      days.forEach(function (day) {
+        var openTasks = (day.tasks || []).filter(function (task) { return !task.done && String(task.status || '').toLowerCase() !== 'done'; });
+        lines.push('- ' + (day.date || 'Ohne Datum') + ' | reviewDone: ' + (day.reviewDone ? 'ja' : 'nein') + ' | closedAt: ' + (day.closedAt || '—') + ' | Karten: ' + day.rawCards.length + ' | Objekte: ' + day.objects.length + ' | Migrationen: ' + day.migrations.length + ' | offene Aufgaben: ' + openTasks.length);
+      });
       lines.push('');
       days.forEach(function (day) {
         lines.push('# ' + (day.date || 'Ohne Datum'));
@@ -1829,6 +2010,14 @@
         if (day.migrations.length) {
           lines.push('Migrationen:');
           day.migrations.forEach(function (item) { lines.push('- ' + item.text + ' | Richtung: ' + (item.direction || '—') + ' | Zielhorizont: ' + (item.targetHorizon || '—') + ' | Ziel: ' + (item.targetLabel || '—')); });
+        }
+        if (day.rawCards.length) {
+          lines.push('Rohkarten-Signale:');
+          day.rawCards.slice(0, 4).forEach(function (card) { lines.push('- ' + (card.type || 'card') + ': ' + (card.text || '—')); });
+        }
+        if (day.objects.length) {
+          lines.push('Objekt-Signale:');
+          day.objects.slice(0, 5).forEach(function (obj) { lines.push('- ' + (obj.type || 'objekt') + ': ' + (obj.text || '—')); });
         }
         if (day.quantText) lines.push('Quant-Daten: ' + day.quantText);
         if (day.annotations) lines.push('Annotationen: ' + day.annotations);
