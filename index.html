@@ -1180,6 +1180,121 @@
       return [value];
     }
 
+    function firstNonEmptyArray() {
+      for (var i = 0; i < arguments.length; i++) {
+        var value = arguments[i];
+        if (Array.isArray(value) && value.length) return value;
+        if (!Array.isArray(value) && value !== undefined && value !== null && value !== '') return asArray(value);
+      }
+      return [];
+    }
+
+    var OBJECT_TYPE_GROUPS = {
+      task: ['aufgabe', 'task', 'todo'],
+      event: ['ereignis', 'event'],
+      note: ['notiz', 'note'],
+      idea: ['idee', 'idea'],
+      quote: ['zitat', 'quote']
+    };
+
+    function normalizeObjectTypeValue(value) {
+      return String(value || '').trim().toLowerCase();
+    }
+
+    function readObjectType(obj) {
+      if (!obj || typeof obj !== 'object') return '';
+      return normalizeObjectTypeValue(firstNonEmpty(obj.typ, obj.type, ''));
+    }
+
+    function classifyObjectType(typeValue) {
+      var type = normalizeObjectTypeValue(typeValue);
+      if (!type) return '';
+      if (OBJECT_TYPE_GROUPS.task.indexOf(type) !== -1) return 'task';
+      if (OBJECT_TYPE_GROUPS.event.indexOf(type) !== -1) return 'event';
+      if (OBJECT_TYPE_GROUPS.note.indexOf(type) !== -1) return 'note';
+      if (OBJECT_TYPE_GROUPS.idea.indexOf(type) !== -1) return 'idea';
+      if (OBJECT_TYPE_GROUPS.quote.indexOf(type) !== -1) return 'quote';
+      return '';
+    }
+
+    function buildObjectTypeSummary(day) {
+      var summary = {
+        task: [],
+        event: [],
+        note: [],
+        idea: [],
+        quote: []
+      };
+      asArray(day && day.objects).forEach(function (obj) {
+        var bucket = classifyObjectType(readObjectType(obj));
+        if (bucket) summary[bucket].push(obj);
+      });
+      return summary;
+    }
+
+    function countTaskLikeItems(day) {
+      var objectSummary = buildObjectTypeSummary(day);
+      return objectSummary.task.length || asArray(day && day.tasks).length;
+    }
+
+    function countEventLikeItems(day) {
+      var objectSummary = buildObjectTypeSummary(day);
+      return objectSummary.event.length || asArray(day && day.events).length;
+    }
+
+    function countNoteLikeItems(day) {
+      return buildObjectTypeSummary(day).note.length;
+    }
+
+    function countIdeaLikeItems(day) {
+      return buildObjectTypeSummary(day).idea.length;
+    }
+
+    function countQuoteLikeItems(day) {
+      return buildObjectTypeSummary(day).quote.length;
+    }
+
+    function countMigrationLikeItems(day) {
+      return asArray(day && day.migrations).length;
+    }
+
+    function previewCountLabel(value, source) {
+      if (!value) return '0';
+      if (source === 'objects') return String(value) + ' · Obj';
+      if (source === 'legacy') return String(value) + ' · Legacy';
+      return String(value);
+    }
+
+    function getDailyPreviewCounts(day) {
+      var objectSummary = buildObjectTypeSummary(day);
+      var taskLegacyCount = asArray(day && day.tasks).length;
+      var eventLegacyCount = asArray(day && day.events).length;
+      var migrationCount = countMigrationLikeItems(day);
+      return {
+        tasks: {
+          count: objectSummary.task.length || taskLegacyCount,
+          source: objectSummary.task.length ? 'objects' : (taskLegacyCount ? 'legacy' : '')
+        },
+        events: {
+          count: objectSummary.event.length || eventLegacyCount,
+          source: objectSummary.event.length ? 'objects' : (eventLegacyCount ? 'legacy' : '')
+        },
+        migrations: {
+          count: migrationCount,
+          source: migrationCount ? 'legacy' : ''
+        },
+        notes: objectSummary.note.length,
+        ideas: objectSummary.idea.length,
+        quotes: objectSummary.quote.length
+      };
+    }
+
+    function hasMeaningfulDayData(day) {
+      if (!day) return false;
+      var preview = getDailyPreviewCounts(day);
+      return !!(day.date || day.notes || preview.tasks.count || preview.events.count || preview.migrations.count || preview.notes || preview.ideas || preview.quotes || day.quantText || day.annotations || day.bulletJournalRaw || asArray(day.rawCards).length || asArray(day.objects).length || asArray(day.feedItems).length);
+    }
+
     function toReadableText(value) {
       if (value === undefined || value === null) return '';
       if (typeof value === 'string') return value;
@@ -1274,12 +1389,12 @@
 
     function normalizeImportedDay(day) {
       var date = coerceDateOnly(firstNonEmpty(day.date, day.dayDate, day.isoDate, day.day, day.createdAt, day.updatedAt));
-      var tasks = asArray(firstNonEmpty(day.tasks, day.openTasks, day.dailyTasks, day.todos, [])).map(normalizeTaskItem).filter(function (item) { return item.text; });
-      var events = asArray(firstNonEmpty(day.events, day.logEvents, day.eventItems, [])).map(normalizeEventItem).filter(function (item) { return item.text; });
-      var migrations = asArray(firstNonEmpty(day.migrations, day.taskMigrations, day.movedTasks, day.migrationLog, [])).map(function (item) {
+      var tasks = asArray(firstNonEmptyArray(day.tasks, day.openTasks, day.dailyTasks, day.todos, [])).map(normalizeTaskItem).filter(function (item) { return item.text; });
+      var events = asArray(firstNonEmptyArray(day.events, day.logEvents, day.eventItems, [])).map(normalizeEventItem).filter(function (item) { return item.text; });
+      var migrations = asArray(firstNonEmptyArray(day.migrations, day.taskMigrations, day.movedTasks, day.migrationLog, [])).map(function (item) {
         return normalizeMigrationItem(item, date);
       }).filter(function (item) { return item.text || item.targetHorizon; });
-      var rawCards = asArray(firstNonEmpty(day.rawCards, day.cards, [])).map(function (card) {
+      var rawCards = asArray(firstNonEmptyArray(day.rawCards, day.cards, [])).map(function (card) {
         var base = normalizeLooseItem(card);
         return {
           id: firstNonEmpty(base.id, base.cardId, ''),
@@ -1289,7 +1404,7 @@
           processed: !!base.processed
         };
       }).filter(function (item) { return item.text || item.type || item.time; });
-      var objects = asArray(firstNonEmpty(day.objects, day.extractedObjects, [])).map(function (obj) {
+      var objects = asArray(firstNonEmptyArray(day.objects, day.extractedObjects, [])).map(function (obj) {
         var base = normalizeLooseItem(obj);
         return {
           id: firstNonEmpty(base.id, base.objectId, ''),
@@ -1302,7 +1417,7 @@
           context: firstNonEmpty(base.kontext, base.context, '')
         };
       }).filter(function (item) { return item.text || item.type; });
-      var feedItems = asArray(firstNonEmpty(day.feedItems, day.feed, [])).map(function (item) {
+      var feedItems = asArray(firstNonEmptyArray(day.feedItems, day.feed, [])).map(function (item) {
         var base = normalizeLooseItem(item);
         return {
           id: firstNonEmpty(base.id, base.feedId, ''),
@@ -1547,7 +1662,7 @@
         } catch (e) {}
       }
       var days = Object.keys(byDate).sort().map(function (date) { return byDate[date]; }).filter(function (day) {
-        return day.date || day.notes || day.tasks.length || day.events.length || day.migrations.length || day.quantText || day.annotations || day.bulletJournalRaw || day.rawCards.length || day.objects.length;
+        return hasMeaningfulDayData(day);
       });
       if (!days.length) throw new Error('Keine nutzbaren Tage aus ZIP extrahiert');
       return {
@@ -1647,7 +1762,7 @@
           throw new Error('Keine Daily-Log-Tagesdaten erkannt (erwartet z. B. days, dailyLogs oder entries)');
         }
         var days = rawDays.map(normalizeImportedDay).filter(function (day) {
-          return day.date || day.notes || day.tasks.length || day.events.length || day.migrations.length || day.quantText || day.annotations || day.bulletJournalRaw || day.rawCards.length || day.objects.length || day.feedItems.length;
+          return hasMeaningfulDayData(day);
         });
         var weeks = buildWeekBuckets(days);
         S.dailyLogReadCache = {
@@ -1717,16 +1832,19 @@
     function buildConvertedDaysFromDays(days) {
       var chunks = [];
       (days || []).forEach(function (day) {
-        if (!day.date && !day.notes && !day.tasks.length && !day.events.length && !day.migrations.length) return;
+        if (!hasMeaningfulDayData(day)) return;
         var block = [];
         block.push('# ' + (day.date || 'Ohne Datum'));
-        if (day.events.length) {
+        var objectSummary = buildObjectTypeSummary(day);
+        var eventItems = objectSummary.event.length ? objectSummary.event.map(function (obj) { return { text: obj.text, kind: readObjectType(obj) }; }) : day.events;
+        var taskItems = objectSummary.task.length ? objectSummary.task.map(function (obj) { return { text: obj.text, status: obj.status }; }) : day.tasks;
+        if (eventItems.length) {
           block.push('## Ereignisse');
-          day.events.forEach(function (item) { block.push('- ' + item.text + (item.kind ? ' [' + item.kind + ']' : '')); });
+          eventItems.forEach(function (item) { block.push('- ' + item.text + (item.kind ? ' [' + item.kind + ']' : '')); });
         }
-        if (day.tasks.length) {
+        if (taskItems.length) {
           block.push('## Aufgaben');
-          day.tasks.forEach(function (item) { block.push('- ' + item.text + (item.status ? ' [' + item.status + ']' : '')); });
+          taskItems.forEach(function (item) { block.push('- ' + item.text + (item.status ? ' [' + item.status + ']' : '')); });
         }
         if (day.migrations.length) {
           block.push('## Migrationen');
@@ -1877,14 +1995,17 @@
         <div class="small" style="margin-bottom:10px">Quelle: ${esc(session.dailyLogReadMeta.sourceKind || S.dailyLogReadCache.sourceKind || 'external_read_only_gist')} · ID: ${esc(session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—')} · Datei: ${esc(session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—')}</div>
         <div class="small" style="margin-bottom:10px">Auswahl: <strong>${esc(getSelectedDailyLogLabel(session))}</strong></div>
         <table class="table-lite">
-          <tr><th>Datum</th><th>Notizen</th><th>Aufgaben</th><th>Ereignisse</th><th>Migrationen</th></tr>
+          <tr><th>Datum</th><th>Notizen</th><th>Aufgaben</th><th>Ereignisse</th><th>Migrationen</th><th>Ideen</th><th>Zitate</th></tr>
           ${days.map(function (day) {
+            var preview = getDailyPreviewCounts(day);
             return '<tr>' +
               '<td>' + esc(day.date || '—') + '</td>' +
-              '<td>' + (day.notes ? 'ja' : '—') + '</td>' +
-              '<td>' + day.tasks.length + '</td>' +
-              '<td>' + day.events.length + '</td>' +
-              '<td>' + day.migrations.length + '</td>' +
+              '<td>' + (day.notes ? 'ja' : (preview.notes ? String(preview.notes) + ' · Obj' : '—')) + '</td>' +
+              '<td>' + previewCountLabel(preview.tasks.count, preview.tasks.source) + '</td>' +
+              '<td>' + previewCountLabel(preview.events.count, preview.events.source) + '</td>' +
+              '<td>' + previewCountLabel(preview.migrations.count, preview.migrations.source) + '</td>' +
+              '<td>' + (preview.ideas ? String(preview.ideas) + ' · Obj' : '—') + '</td>' +
+              '<td>' + (preview.quotes ? String(preview.quotes) + ' · Obj' : '—') + '</td>' +
             '</tr>';
           }).join('')}
         </table>
@@ -1993,19 +2114,22 @@
       lines.push('KOMPAKTE WOCHENLESANSICHT (10-15 MIN)');
       days.forEach(function (day) {
         var openTasks = (day.tasks || []).filter(function (task) { return !task.done && String(task.status || '').toLowerCase() !== 'done'; });
-        lines.push('- ' + (day.date || 'Ohne Datum') + ' | reviewDone: ' + (day.reviewDone ? 'ja' : 'nein') + ' | closedAt: ' + (day.closedAt || '—') + ' | Karten: ' + day.rawCards.length + ' | Objekte: ' + day.objects.length + ' | Migrationen: ' + day.migrations.length + ' | offene Aufgaben: ' + openTasks.length);
+        lines.push('- ' + (day.date || 'Ohne Datum') + ' | reviewDone: ' + (day.reviewDone ? 'ja' : 'nein') + ' | closedAt: ' + (day.closedAt || '—') + ' | Karten: ' + day.rawCards.length + ' | Objekte: ' + day.objects.length + ' | Migrationen: ' + countMigrationLikeItems(day) + ' | Aufgaben (Preview): ' + countTaskLikeItems(day) + ' | Ereignisse (Preview): ' + countEventLikeItems(day) + ' | offene Aufgaben: ' + openTasks.length);
       });
       lines.push('');
       days.forEach(function (day) {
         lines.push('# ' + (day.date || 'Ohne Datum'));
         if (day.notes) lines.push('Notizen: ' + day.notes);
-        if (day.events.length) {
+        var objectSummary = buildObjectTypeSummary(day);
+        var eventItems = objectSummary.event.length ? objectSummary.event.map(function (obj) { return { text: obj.text, kind: readObjectType(obj) }; }) : day.events;
+        var taskItems = objectSummary.task.length ? objectSummary.task.map(function (obj) { return { text: obj.text, status: obj.status }; }) : day.tasks;
+        if (eventItems.length) {
           lines.push('Ereignisse:');
-          day.events.forEach(function (item) { lines.push('- ' + item.text + (item.kind ? ' [' + item.kind + ']' : '')); });
+          eventItems.forEach(function (item) { lines.push('- ' + item.text + (item.kind ? ' [' + item.kind + ']' : '')); });
         }
-        if (day.tasks.length) {
+        if (taskItems.length) {
           lines.push('Aufgaben:');
-          day.tasks.forEach(function (item) { lines.push('- ' + item.text + (item.status ? ' [' + item.status + ']' : '')); });
+          taskItems.forEach(function (item) { lines.push('- ' + item.text + (item.status ? ' [' + item.status + ']' : '')); });
         }
         if (day.migrations.length) {
           lines.push('Migrationen:');
