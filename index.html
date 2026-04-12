@@ -734,7 +734,10 @@
     function load() {
       try {
         var raw = localStorage.getItem(LKEY);
-        if (raw) S = JSON.parse(raw);
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) S = parsed;
+        }
       } catch (e) {}
       if (!Array.isArray(S.sessions)) S.sessions = [];
       if (!S.currentTab) S.currentTab = 'dashboard';
@@ -749,20 +752,17 @@
           weeks: []
         };
       }
-      if (!S.sessions.length) {
-        var first = blankSession();
-        S.sessions.push(first);
-        S.currentSessionId = first.id;
-      }
-      if (!getSession()) {
-        S.currentSessionId = S.sessions[0].id;
-      }
       normalizeState();
+      ensureActiveSession();
     }
 
     function normalizeState() {
       var fresh = blankSession();
+      S.sessions = S.sessions.filter(function (session) {
+        return session && typeof session === 'object' && !Array.isArray(session);
+      });
       S.sessions.forEach(function (session) {
+        if (!session.id || typeof session.id !== 'string' || !session.id.trim()) session.id = uid();
         Object.keys(fresh).forEach(function (key) {
           if (session[key] === undefined) session[key] = JSON.parse(JSON.stringify(fresh[key]));
         });
@@ -779,8 +779,29 @@
         ensureReviewPeriodState(session);
         session.updatedAt = session.updatedAt || session.createdAt || new Date().toISOString();
       });
+      if (!S.sessions.length) {
+        var first = blankSession();
+        S.sessions.push(first);
+      }
+      if (!S.sessions.find(function (s) { return s.id === S.currentSessionId; })) {
+        S.currentSessionId = S.sessions[0].id;
+      }
       if (!S.dailyLogReadCache.weeks) S.dailyLogReadCache.weeks = [];
       if (!S.dailyLogReadCache.days) S.dailyLogReadCache.days = [];
+    }
+
+    function ensureActiveSession() {
+      if (!Array.isArray(S.sessions)) S.sessions = [];
+      if (!S.sessions.length) {
+        var first = blankSession();
+        S.sessions.push(first);
+      }
+      var active = S.sessions.find(function (s) { return s && s.id === S.currentSessionId; }) || null;
+      if (!active) {
+        S.currentSessionId = S.sessions[0].id;
+        active = S.sessions[0];
+      }
+      return active;
     }
 
     function save(skipAutoSync, preserveExported, preserveActiveSessionTimestamp) {
@@ -795,7 +816,7 @@
     }
 
     function getSession() {
-      return S.sessions.find(function (s) { return s.id === S.currentSessionId; }) || null;
+      return ensureActiveSession();
     }
 
     function getStepData(stepId) {
@@ -3103,6 +3124,12 @@
 
     function renderAll() {
       var session = getSession();
+      if (!session) {
+        var fallback = blankSession();
+        S.sessions = [fallback];
+        S.currentSessionId = fallback.id;
+        session = fallback;
+      }
       renderTabs();
       updateMeta();
       document.getElementById('panel-dashboard').innerHTML = dashboardHTML(session);
