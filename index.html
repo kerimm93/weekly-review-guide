@@ -679,6 +679,12 @@
         updatedAt: new Date().toISOString(),
         weekLabel: 'KW ' + guessWeekLabel(),
         reviewDate: today(),
+        reviewPeriodMode: 'week',
+        reviewPeriodStart: '',
+        reviewPeriodEnd: '',
+        reviewPeriodPreset: '',
+        reviewPeriodLabel: '',
+        reviewPeriodTouched: false,
         lastWeeklyLogUrl: '',
         targetChat: 'Weekly Log Chat',
         currentFocus: '',
@@ -770,6 +776,7 @@
         if (!session.dailyLogSelection) session.dailyLogSelection = JSON.parse(JSON.stringify(fresh.dailyLogSelection));
         if (!session.dailyLogReadMeta) session.dailyLogReadMeta = JSON.parse(JSON.stringify(fresh.dailyLogReadMeta));
         if (!session.weeklyTaskOverview) session.weeklyTaskOverview = JSON.parse(JSON.stringify(fresh.weeklyTaskOverview));
+        ensureReviewPeriodState(session);
         session.updatedAt = session.updatedAt || session.createdAt || new Date().toISOString();
       });
       if (!S.dailyLogReadCache.weeks) S.dailyLogReadCache.weeks = [];
@@ -861,6 +868,78 @@
       if (field === 'mode' && value === 'week' && !session.dailyLogSelection.weekKey && S.dailyLogReadCache.weeks.length) {
         session.dailyLogSelection.weekKey = S.dailyLogReadCache.weeks[0].key;
       }
+      ensureReviewPeriodState(session);
+      save();
+      renderAll();
+    }
+
+    function ensureReviewPeriodState(session) {
+      if (!session) return;
+      if (!session.reviewPeriodMode) session.reviewPeriodMode = 'week';
+      if (session.reviewPeriodStart == null) session.reviewPeriodStart = '';
+      if (session.reviewPeriodEnd == null) session.reviewPeriodEnd = '';
+      if (session.reviewPeriodPreset == null) session.reviewPeriodPreset = '';
+      if (session.reviewPeriodLabel == null) session.reviewPeriodLabel = '';
+      if (session.reviewPeriodTouched == null) {
+        session.reviewPeriodTouched = !!(session.reviewPeriodPreset || session.reviewPeriodStart || session.reviewPeriodEnd || session.reviewPeriodLabel);
+      }
+      var hasExisting = !!(session.reviewPeriodPreset || session.reviewPeriodStart || session.reviewPeriodEnd || session.reviewPeriodLabel);
+      if (!hasExisting && !session.reviewPeriodTouched) applyDailyLogSelectionToReviewPeriod(session, true, false);
+    }
+
+    function getReviewPeriodLabel(session) {
+      if (!session) return '—';
+      ensureReviewPeriodState(session);
+      if (session.reviewPeriodMode === 'range') {
+        return (session.reviewPeriodStart || 'offen') + ' → ' + (session.reviewPeriodEnd || 'offen');
+      }
+      if (session.reviewPeriodLabel) return session.reviewPeriodLabel;
+      var match = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === session.reviewPeriodPreset; });
+      if (match) return match.label + ' (' + match.start + ' → ' + match.end + ')';
+      return session.reviewPeriodPreset || 'Keine Woche gewählt';
+    }
+
+    function applyDailyLogSelectionToReviewPeriod(session, silent, markTouched) {
+      if (!session) return;
+      ensureReviewPeriodState(session);
+      var sel = session.dailyLogSelection || blankSession().dailyLogSelection;
+      if (sel.mode === 'range') {
+        session.reviewPeriodMode = 'range';
+        session.reviewPeriodStart = sel.rangeStart || '';
+        session.reviewPeriodEnd = sel.rangeEnd || '';
+        session.reviewPeriodPreset = '';
+        session.reviewPeriodLabel = (sel.rangeStart || 'offen') + ' → ' + (sel.rangeEnd || 'offen');
+      } else {
+        var match = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === sel.weekKey; });
+        session.reviewPeriodMode = 'week';
+        session.reviewPeriodPreset = sel.weekKey || '';
+        session.reviewPeriodStart = match ? match.start : '';
+        session.reviewPeriodEnd = match ? match.end : '';
+        session.reviewPeriodLabel = match ? match.label : (sel.weekKey || '');
+      }
+      if (markTouched) session.reviewPeriodTouched = true;
+      if (!silent) {
+        save();
+        renderAll();
+        toast('Daily-Log-Auswahl als Review-Zeitraum übernommen');
+      }
+    }
+
+    function patchReviewPeriod(field, value) {
+      var session = getSession();
+      if (!session) return;
+      ensureReviewPeriodState(session);
+      session[field] = value;
+      session.reviewPeriodTouched = true;
+      if (field === 'reviewPeriodMode' && value === 'week' && !session.reviewPeriodPreset && S.dailyLogReadCache.weeks.length) {
+        session.reviewPeriodPreset = S.dailyLogReadCache.weeks[0].key;
+      }
+      if (field === 'reviewPeriodPreset') {
+        var match = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === value; });
+        session.reviewPeriodLabel = match ? match.label : '';
+        session.reviewPeriodStart = match ? match.start : session.reviewPeriodStart;
+        session.reviewPeriodEnd = match ? match.end : session.reviewPeriodEnd;
+      }
       save();
       renderAll();
     }
@@ -917,7 +996,8 @@
         var step = session.steps.find(function (s) { return s.id === def.id; });
         return !step || !step.done;
       });
-      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Wochensession</div>\n              <div class="notice">Hier steuerst du die Review wie in deinem Neurolist-Ablauf: erst Material schließen, dann strukturieren, dann den Weekly-Log-Chat mit dem eigentlichen Review anwerfen.</div>\n              <label>Wochenlabel</label>\n              <input value="' + esc(session.weekLabel) + '" onchange="patchSession(\'weekLabel\', this.value)" placeholder="z. B. KW 14 – 2026" />\n              <label>Review-Datum</label>\n              <input type="date" value="' + esc(session.reviewDate || today()) + '" onchange="patchSession(\'reviewDate\', this.value)" />\n              <label>Letzter Weekly-Log-Chat / URL</label>\n              <input value="' + esc(session.lastWeeklyLogUrl) + '" onchange="patchSession(\'lastWeeklyLogUrl\', this.value)" placeholder="https://chatgpt.com/..." />\n              <label>Aktueller Fokus dieser Review</label>\n              <textarea class="compact" onchange="patchSession(\'currentFocus\', this.value)" placeholder="Was soll diese Review diesmal besonders klären?">' + esc(session.currentFocus) + '</textarea>\n              <label>Wöchentliche Intention</label>\n              <textarea class="compact" onchange="patchSession(\'weeklyIntent\', this.value)" placeholder="Wofür machst du diese Weekly Review konkret?">' + esc(session.weeklyIntent) + '</textarea>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Fortschritt</div>\n              <div class="small">' + completedCount(session) + ' von ' + DEFAULT_STEPS.length + ' Schritten erledigt. Offene Minuten: ' + remainingMinutes(session) + '.</div>\n              <div class="progress"><div class="progress-fill" style="width:' + progress + '%"></div></div>\n              <div class="small" style="margin-top:10px">Nächster offener Schritt: <strong>' + esc(nextOpen ? nextOpen.title : 'Alles erledigt') + '</strong></div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="switchTab(\'steps\')">Zur Schrittliste</button>\n                <button class="btn btn-m" onclick="switchTab(\'prompts\')">Zum Prompt Studio</button>\n                <button class="btn btn-s" onclick="switchTab(\'data\')">Zur Datenansicht</button>\n              </div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Session-Aktionen</div>\n              <div class="btn-row">\n                <button class="btn btn-v" onclick="newSession()">Neue Session</button>\n                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>\n                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>\n              </div>\n              <div class="small" style="margin-top:12px">Du kannst Wochen getrennt als Sessions führen. Alles wird lokal gespeichert.</div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Review-Logik kompakt</div>\n              <table class="table-lite">\n                <tr><th>Phase</th><th>Ziel</th></tr>\n                <tr><td>Vorbereitung</td><td>Daily Notes schließen, Tage umformen, Annotationen diktieren.</td></tr>\n                <tr><td>Datenbasis</td><td>Quantitative Daten und migrierte Aufgaben festhalten.</td></tr>\n                <tr><td>Weekly Log</td><td>Letzten Weekly-Log-Kontext öffnen und Review mit klarer Input-Reihenfolge starten.</td></tr>\n                <tr><td>Review</td><td>Beobachtung, Interpretation und Entscheidung sauber trennen.</td></tr>\n              </table>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktive Sessions</div>\n              <div class="session-list">' + sessionListHTML() + '</div>\n            </div>\n          </div>\n        </div>\n      ';
+      var reviewPeriodLabel = getReviewPeriodLabel(session);
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Wochensession</div>\n              <div class="notice">Hier steuerst du die Review wie in deinem Neurolist-Ablauf: erst Material schließen, dann strukturieren, dann den Weekly-Log-Chat mit dem eigentlichen Review anwerfen.</div>\n              <label>Wochenlabel</label>\n              <input value="' + esc(session.weekLabel) + '" onchange="patchSession(\'weekLabel\', this.value)" placeholder="z. B. KW 14 – 2026" />\n              <label>Review-Datum</label>\n              <input type="date" value="' + esc(session.reviewDate || today()) + '" onchange="patchSession(\'reviewDate\', this.value)" />\n              <div class="small" style="margin-top:6px"><strong>Review-Zeitraum:</strong> ' + esc(reviewPeriodLabel) + '</div>\n              <label>Letzter Weekly-Log-Chat / URL</label>\n              <input value="' + esc(session.lastWeeklyLogUrl) + '" onchange="patchSession(\'lastWeeklyLogUrl\', this.value)" placeholder="https://chatgpt.com/..." />\n              <label>Aktueller Fokus dieser Review</label>\n              <textarea class="compact" onchange="patchSession(\'currentFocus\', this.value)" placeholder="Was soll diese Review diesmal besonders klären?">' + esc(session.currentFocus) + '</textarea>\n              <label>Wöchentliche Intention</label>\n              <textarea class="compact" onchange="patchSession(\'weeklyIntent\', this.value)" placeholder="Wofür machst du diese Weekly Review konkret?">' + esc(session.weeklyIntent) + '</textarea>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Fortschritt</div>\n              <div class="small">' + completedCount(session) + ' von ' + DEFAULT_STEPS.length + ' Schritten erledigt. Offene Minuten: ' + remainingMinutes(session) + '.</div>\n              <div class="progress"><div class="progress-fill" style="width:' + progress + '%"></div></div>\n              <div class="small" style="margin-top:10px">Nächster offener Schritt: <strong>' + esc(nextOpen ? nextOpen.title : 'Alles erledigt') + '</strong></div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="switchTab(\'steps\')">Zur Schrittliste</button>\n                <button class="btn btn-m" onclick="switchTab(\'prompts\')">Zum Prompt Studio</button>\n                <button class="btn btn-s" onclick="switchTab(\'data\')">Zur Datenansicht</button>\n              </div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Session-Aktionen</div>\n              <div class="btn-row">\n                <button class="btn btn-v" onclick="newSession()">Neue Session</button>\n                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>\n                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>\n              </div>\n              <div class="small" style="margin-top:12px">Du kannst Wochen getrennt als Sessions führen. Alles wird lokal gespeichert.</div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Review-Logik kompakt</div>\n              <table class="table-lite">\n                <tr><th>Phase</th><th>Ziel</th></tr>\n                <tr><td>Vorbereitung</td><td>Daily Notes schließen, Tage umformen, Annotationen diktieren.</td></tr>\n                <tr><td>Datenbasis</td><td>Quantitative Daten und migrierte Aufgaben festhalten.</td></tr>\n                <tr><td>Weekly Log</td><td>Letzten Weekly-Log-Kontext öffnen und Review mit klarer Input-Reihenfolge starten.</td></tr>\n                <tr><td>Review</td><td>Beobachtung, Interpretation und Entscheidung sauber trennen.</td></tr>\n              </table>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktive Sessions</div>\n              <div class="session-list">' + sessionListHTML() + '</div>\n            </div>\n          </div>\n        </div>\n      ';
     }
 
     function sessionListHTML() {
@@ -969,20 +1049,26 @@
     }
 
     function promptButtonsHTML() {
-      var groups = [
-        { id: 'weeklyLogSetup', label: 'Weekly-Log-Setup' },
+      var primary = [
         { id: 'finishDailyNotes', label: 'Daily Notes finalisieren' },
         { id: 'convertDays', label: 'Tage umwandeln' },
         { id: 'reviewAnnotations', label: 'Annotationen diktieren' },
         { id: 'quantData', label: 'Quant-Daten sichern' },
         { id: 'migrateTasks', label: 'Aufgaben migrieren' },
-        { id: 'openLastWeeklyLog', label: 'Letzten Weekly Log öffnen' },
         { id: 'startWeeklyReview', label: 'Weekly Review starten' },
         { id: 'reviewSummary', label: 'Review zusammenfassen' }
       ];
-      return groups.map(function (g) {
+      var legacy = [
+        { id: 'weeklyLogSetup', label: 'Legacy: Weekly-Log-Setup' },
+        { id: 'openLastWeeklyLog', label: 'Legacy: Letzten Weekly Log öffnen' }
+      ];
+      var primaryHtml = primary.map(function (g) {
         return '<button class="btn btn-s" onclick="previewPrompt(\'' + g.id + '\')">' + esc(g.label) + '</button>';
       }).join('');
+      var legacyHtml = legacy.map(function (g) {
+        return '<button class="btn btn-d" onclick="previewPrompt(\'' + g.id + '\')">' + esc(g.label) + '</button>';
+      }).join('');
+      return primaryHtml + '<details style="margin-top:8px"><summary class="small">Legacy / optional</summary><div class="btn-row" style="margin-top:8px">' + legacyHtml + '</div></details>';
     }
 
     function promptsHTML(session) {
@@ -992,6 +1078,7 @@
     function dataHTML(session) {
       var dailyLogSourceHtml = renderDailyLogSourceHTML(session);
       var selectionHtml = renderDailyLogSelectionHTML(session);
+      var reviewPeriodHtml = renderReviewPeriodHTML(session);
       var previewHtml = renderDailyLogPreviewHTML(session);
       var migrationHtml = renderWeeklyTaskOverviewHTML(session);
 
@@ -1006,6 +1093,11 @@
             <div class="qs">
               <div class="qh">Woche / Datumsbereich aus Daily Log</div>
               ${selectionHtml}
+            </div>
+
+            <div class="qs">
+              <div class="qh">Review-Kontext</div>
+              ${reviewPeriodHtml}
             </div>
 
             <div class="qs">
@@ -1092,6 +1184,7 @@
               <div class="qh">Aktuelle Session kompakt</div>
               <div class="kv"><div class="k">Wochenlabel</div><div>${esc(session.weekLabel)}</div></div>
               <div class="kv"><div class="k">Review-Datum</div><div>${esc(session.reviewDate)}</div></div>
+              <div class="kv"><div class="k">Review-Zeitraum</div><div>${esc(getReviewPeriodLabel(session))}</div></div>
               <div class="kv"><div class="k">Letzter Weekly Log</div><div>${esc(session.lastWeeklyLogUrl || '—')}</div></div>
               <div class="kv"><div class="k">Aktueller Fokus</div><div>${esc(session.currentFocus || '—')}</div></div>
             </div>
@@ -1100,7 +1193,6 @@
           <div>
             <div class="qs">
               <div class="qh">Prompt-Bausteine in dieser App</div>
-              <div class="tag">Weekly-Log-Setup</div>
               <div class="tag">Daily-Notes-Abschluss</div>
               <div class="tag">Obsidian-Umwandlung</div>
               <div class="tag">Annotationsprompt</div>
@@ -1108,6 +1200,7 @@
               <div class="tag">Migration</div>
               <div class="tag">Review-Start</div>
               <div class="tag">Review-Zusammenfassung</div>
+              <div class="tag">Legacy: Weekly-Log-Setup / Altkontext</div>
               <div class="notice info" style="margin-top:12px">Der interne Weekly-Review-Gist-Sync und die externe Daily-Log-Read-Quelle sind bewusst getrennt. Die Daily-Log-Quelle wird nur per GET gelesen.</div>
             </div>
           </div>
@@ -1986,6 +2079,40 @@
       `;
     }
 
+    function renderReviewPeriodHTML(session) {
+      ensureReviewPeriodState(session);
+      var cache = S.dailyLogReadCache || { weeks: [] };
+      var weekOptions = (cache.weeks || []).map(function (week) {
+        var label = week.label + ' (' + week.start + ' → ' + week.end + ')';
+        return '<option value="' + esc(week.key) + '" ' + (session.reviewPeriodPreset === week.key ? 'selected' : '') + '>' + esc(label) + '</option>';
+      }).join('');
+      return `
+        <label>Review-Datum</label>
+        <input type="date" value="${esc(session.reviewDate || today())}" onchange="patchSession('reviewDate', this.value)" />
+        <label>Review-Zeitraum</label>
+        <select onchange="patchReviewPeriod('reviewPeriodMode', this.value)">
+          <option value="week" ${session.reviewPeriodMode === 'week' ? 'selected' : ''}>Kalenderwoche</option>
+          <option value="range" ${session.reviewPeriodMode === 'range' ? 'selected' : ''}>Datumsbereich</option>
+        </select>
+        ${session.reviewPeriodMode === 'week' ? `
+          <label>Review-Woche</label>
+          <select onchange="patchReviewPeriod('reviewPeriodPreset', this.value)">
+            <option value="">Keine Woche gewählt</option>
+            ${weekOptions}
+          </select>
+          <div class="small" style="margin-top:8px">Aktuell: <strong>${esc(getReviewPeriodLabel(session))}</strong></div>
+        ` : `
+          <label>Review-Zeitraum Start</label>
+          <input type="date" value="${esc(session.reviewPeriodStart || '')}" onchange="patchReviewPeriod('reviewPeriodStart', this.value)" />
+          <label>Review-Zeitraum Ende</label>
+          <input type="date" value="${esc(session.reviewPeriodEnd || '')}" onchange="patchReviewPeriod('reviewPeriodEnd', this.value)" />
+        `}
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn btn-q" onclick="applyDailyLogSelectionToReviewPeriod(getSession(), false, true)">Daily-Log-Auswahl als Review-Zeitraum übernehmen</button>
+        </div>
+      `;
+    }
+
     function renderDailyLogPreviewHTML(session) {
       var days = getSelectedDailyLogDays(session);
       if (!days.length) {
@@ -2017,13 +2144,24 @@
       return (list || []).slice(0, max || 3).map(function (item) { return item.text || ''; }).filter(Boolean);
     }
 
+    function compactRawCardSignals(day, max) {
+      return (day.rawCards || []).slice(0, max || 3).map(function (card) {
+        var type = card && card.type ? '[' + card.type + '] ' : '';
+        var text = String((card && card.text) || '').replace(/\s+/g, ' ').trim();
+        if (text.length > 120) text = text.slice(0, 117) + '...';
+        var processed = card && card.processed ? ' ✓' : '';
+        return (type + text + processed).trim();
+      }).filter(Boolean);
+    }
+
     function buildCompactDaySignals(day) {
       var qualitative = [];
-      if (day.notes) qualitative.push(day.notes);
-      compactList(day.feedItems, 2).forEach(function (txt) { qualitative.push(txt); });
-      compactList(day.objects, 3).forEach(function (txt) { qualitative.push(txt); });
+      compactRawCardSignals(day, 3).forEach(function (txt) { qualitative.push('Roh: ' + txt); });
+      if (day.notes) qualitative.push('Notiz: ' + String(day.notes).slice(0, 150));
+      compactList(day.feedItems, 2).forEach(function (txt) { qualitative.push('Feed: ' + txt); });
+      compactList(day.objects, 2).forEach(function (txt) { qualitative.push('Objekt: ' + txt); });
       if (day.plan && typeof day.plan === 'object' && day.plan.intentionen) qualitative.push('Plan: ' + day.plan.intentionen);
-      return qualitative.slice(0, 4);
+      return qualitative.slice(0, 5);
     }
 
     function renderCompactWeeklyReviewHTML(session) {
@@ -2040,6 +2178,7 @@
           <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:rgba(0,0,0,.18)">
             <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>${esc(day.date || 'Ohne Datum')}</strong><span class="small">reviewDone: ${day.reviewDone ? 'ja' : 'nein'} · closedAt: ${esc(day.closedAt || '—')}</span></div>
             ${sig.length ? `<div class="small" style="margin-top:6px"><strong>Qualitativ:</strong> ${esc(sig.join(' | '))}</div>` : ''}
+            <div class="small" style="margin-top:6px"><strong>Markante Rohsignale:</strong> ${esc(compactRawCardSignals(day, 3).join(' | ') || '—')}</div>
             <div class="small" style="margin-top:6px"><strong>Signale:</strong> Cards ${day.rawCards.length} · Objects ${day.objects.length} · Feed ${day.feedItems.length}</div>
             <div class="small" style="margin-top:6px"><strong>Offene Aufgaben:</strong> ${openTasks.length || objectTasks.length ? esc(compactList(openTasks, 2).concat(compactList(objectTasks, 2)).slice(0, 3).join(' | ')) : 'keine klar offenen Marker'}</div>
             <div class="small" style="margin-top:6px"><strong>Migrationen:</strong> ${day.migrations.length ? esc(day.migrations.map(function (m) { return (m.text || '—') + ' → ' + (m.targetLabel || m.targetHorizon || '—'); }).slice(0, 3).join(' | ')) : '—'}</div>
@@ -2109,12 +2248,13 @@
       lines.push('Datei: ' + (session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—'));
       lines.push('Geladen am: ' + (session.dailyLogReadMeta.loadedAt || S.dailyLogReadCache.loadedAt || '—'));
       lines.push('Auswahl: ' + getSelectedDailyLogLabel(session));
+      lines.push('Review-Zeitraum: ' + getReviewPeriodLabel(session));
       lines.push('');
       lines.push('');
       lines.push('KOMPAKTE WOCHENLESANSICHT (10-15 MIN)');
       days.forEach(function (day) {
         var openTasks = (day.tasks || []).filter(function (task) { return !task.done && String(task.status || '').toLowerCase() !== 'done'; });
-        lines.push('- ' + (day.date || 'Ohne Datum') + ' | reviewDone: ' + (day.reviewDone ? 'ja' : 'nein') + ' | closedAt: ' + (day.closedAt || '—') + ' | Karten: ' + day.rawCards.length + ' | Objekte: ' + day.objects.length + ' | Migrationen: ' + countMigrationLikeItems(day) + ' | Aufgaben (Preview): ' + countTaskLikeItems(day) + ' | Ereignisse (Preview): ' + countEventLikeItems(day) + ' | offene Aufgaben: ' + openTasks.length);
+        lines.push('- ' + (day.date || 'Ohne Datum') + ' | reviewDone: ' + (day.reviewDone ? 'ja' : 'nein') + ' | closedAt: ' + (day.closedAt || '—') + ' | Karten: ' + day.rawCards.length + ' | Objekte: ' + day.objects.length + ' | Migrationen: ' + countMigrationLikeItems(day) + ' | Aufgaben (Preview): ' + countTaskLikeItems(day) + ' | Ereignisse (Preview): ' + countEventLikeItems(day) + ' | offene Aufgaben: ' + openTasks.length + ' | Rohsignale: ' + (compactRawCardSignals(day, 2).join(' || ') || '—'));
       });
       lines.push('');
       days.forEach(function (day) {
@@ -2137,7 +2277,7 @@
         }
         if (day.rawCards.length) {
           lines.push('Rohkarten-Signale:');
-          day.rawCards.slice(0, 4).forEach(function (card) { lines.push('- ' + (card.type || 'card') + ': ' + (card.text || '—')); });
+          compactRawCardSignals(day, 3).forEach(function (entry) { lines.push('- ' + entry); });
         }
         if (day.objects.length) {
           lines.push('Objekt-Signale:');
@@ -2156,6 +2296,7 @@
         'AKTIVE REVIEW-SESSION',
         'Wochenlabel: ' + (session.weekLabel || '—'),
         'Review-Datum: ' + (session.reviewDate || '—'),
+        'Review-Zeitraum: ' + getReviewPeriodLabel(session),
         'Aktueller Fokus: ' + (session.currentFocus || '—'),
         'Wöchentliche Intention: ' + (session.weeklyIntent || '—'),
         'Letzter Weekly-Log-Link: ' + (session.lastWeeklyLogUrl || '—')
@@ -2869,6 +3010,7 @@
       lines.push('# Weekly Review – ' + (session.weekLabel || 'Ohne Titel'));
       lines.push('');
       lines.push('- Review-Datum: ' + (session.reviewDate || '—'));
+      lines.push('- Review-Zeitraum: ' + getReviewPeriodLabel(session));
       lines.push('- Letzter Weekly Log: ' + (session.lastWeeklyLogUrl || '—'));
       lines.push('- Fokus: ' + (session.currentFocus || '—'));
       lines.push('- Externe Daily-Log-Quelle: ' + (session.dailyLogReadMeta.sourceGistId || '—'));
