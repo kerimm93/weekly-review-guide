@@ -922,7 +922,12 @@
 
     function applyDailyLogSelectionToReviewPeriod(session, silent, markTouched) {
       if (!session) return;
-      ensureReviewPeriodState(session);
+      if (!session.reviewPeriodMode) session.reviewPeriodMode = 'week';
+      if (session.reviewPeriodStart == null) session.reviewPeriodStart = '';
+      if (session.reviewPeriodEnd == null) session.reviewPeriodEnd = '';
+      if (session.reviewPeriodPreset == null) session.reviewPeriodPreset = '';
+      if (session.reviewPeriodLabel == null) session.reviewPeriodLabel = '';
+      if (session.reviewPeriodTouched == null) session.reviewPeriodTouched = false;
       var sel = session.dailyLogSelection || blankSession().dailyLogSelection;
       if (sel.mode === 'range') {
         session.reviewPeriodMode = 'range';
