@@ -2211,14 +2211,79 @@
       return (list || []).slice(0, max || 3).map(function (item) { return item.text || ''; }).filter(Boolean);
     }
 
+    function getBestRawCards(day, max) {
+      var cards = asArray(day && day.rawCards);
+      var seenTexts = {};
+      var scored = [];
+      cards.forEach(function (card, index) {
+        var text = String((card && card.text) || '').replace(/\s+/g, ' ').trim();
+        if (!text) return;
+        if (seenTexts[text]) return;
+        seenTexts[text] = true;
+        var score = text.length;
+        if (text.length < 15) score -= 30;
+        if (!(card && card.processed)) score += 10;
+        scored.push({ card: card, text: text, score: score, index: index });
+      });
+      scored.sort(function (a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.index - b.index;
+      });
+      return scored.slice(0, max || 3).map(function (entry) { return entry.card; });
+    }
+
     function compactRawCardSignals(day, max) {
-      return (day.rawCards || []).slice(0, max || 3).map(function (card) {
+      return getBestRawCards(day, max).map(function (card) {
         var type = card && card.type ? '[' + card.type + '] ' : '';
         var text = String((card && card.text) || '').replace(/\s+/g, ' ').trim();
         if (text.length > 120) text = text.slice(0, 117) + '...';
         var processed = card && card.processed ? ' ✓' : '';
         return (type + text + processed).trim();
       }).filter(Boolean);
+    }
+
+    function isTaskLikeObject(obj) {
+      return classifyObjectType(readObjectType(obj)) === 'task';
+    }
+
+    function isDone(item) {
+      if (!item || typeof item !== 'object') return false;
+      if (item.done === true) return true;
+      var status = String(item.status || '').toLowerCase();
+      return status.indexOf('done') !== -1 ||
+        status.indexOf('completed') !== -1 ||
+        status.indexOf('complete') !== -1 ||
+        status.indexOf('closed') !== -1 ||
+        status.indexOf('finished') !== -1 ||
+        status.indexOf('erledigt') !== -1 ||
+        status.indexOf('abgeschlossen') !== -1;
+    }
+
+    function getOpenTasks(day) {
+      var objectTasks = asArray(day && day.objects).filter(isTaskLikeObject).map(function (obj) {
+        return {
+          text: String((obj && obj.text) || '').replace(/\s+/g, ' ').trim(),
+          status: firstNonEmpty(obj && obj.status, ''),
+          done: !!(obj && obj.done)
+        };
+      }).filter(function (item) { return item.text; });
+      var legacyTasks = asArray(day && day.tasks).map(normalizeTaskItem).map(function (task) {
+        return {
+          text: String(task.text || '').replace(/\s+/g, ' ').trim(),
+          status: task.status,
+          done: !!task.done
+        };
+      }).filter(function (item) { return item.text; });
+      var sourceTasks = objectTasks.concat(legacyTasks);
+      var seenTexts = {};
+      return sourceTasks.filter(function (item) {
+        var dedupeKey = String(item.text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!dedupeKey) return false;
+        if (isDone(item)) return false;
+        if (seenTexts[dedupeKey]) return false;
+        seenTexts[dedupeKey] = true;
+        return true;
+      });
     }
 
     function buildCompactDaySignals(day) {
@@ -2236,18 +2301,14 @@
       if (!days.length) return '<div class="small">Keine Tage für die kompakte Wochenübersicht gewählt.</div>';
       var rows = days.map(function (day) {
         var sig = buildCompactDaySignals(day);
-        var openTasks = (day.tasks || []).filter(function (task) { return !task.done && String(task.status || '').toLowerCase() !== 'done'; });
-        var objectTasks = (day.objects || []).filter(function (obj) {
-          var t = String(obj.type || '').toLowerCase();
-          return t === 'aufgabe' || t === 'task' || t === 'todo';
-        });
+        var openTasks = getOpenTasks(day);
         return `
           <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:rgba(0,0,0,.18)">
             <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>${esc(day.date || 'Ohne Datum')}</strong><span class="small">reviewDone: ${day.reviewDone ? 'ja' : 'nein'} · closedAt: ${esc(day.closedAt || '—')}</span></div>
             ${sig.length ? `<div class="small" style="margin-top:6px"><strong>Qualitativ:</strong> ${esc(sig.join(' | '))}</div>` : ''}
             <div class="small" style="margin-top:6px"><strong>Markante Rohsignale:</strong> ${esc(compactRawCardSignals(day, 3).join(' | ') || '—')}</div>
             <div class="small" style="margin-top:6px"><strong>Signale:</strong> Cards ${day.rawCards.length} · Objects ${day.objects.length} · Feed ${day.feedItems.length}</div>
-            <div class="small" style="margin-top:6px"><strong>Offene Aufgaben:</strong> ${openTasks.length || objectTasks.length ? esc(compactList(openTasks, 2).concat(compactList(objectTasks, 2)).slice(0, 3).join(' | ')) : 'keine klar offenen Marker'}</div>
+            <div class="small" style="margin-top:6px"><strong>Offene Aufgaben:</strong> ${openTasks.length ? esc(compactList(openTasks, 3).join(' | ')) : 'keine klar offenen Marker'}</div>
             <div class="small" style="margin-top:6px"><strong>Migrationen:</strong> ${day.migrations.length ? esc(day.migrations.map(function (m) { return (m.text || '—') + ' → ' + (m.targetLabel || m.targetHorizon || '—'); }).slice(0, 3).join(' | ')) : '—'}</div>
           </div>
         `;
@@ -2320,23 +2381,23 @@
       lines.push('');
       lines.push('KOMPAKTE WOCHENLESANSICHT (10-15 MIN)');
       days.forEach(function (day) {
-        var openTasks = (day.tasks || []).filter(function (task) { return !task.done && String(task.status || '').toLowerCase() !== 'done'; });
+        var openTasks = getOpenTasks(day);
         lines.push('- ' + (day.date || 'Ohne Datum') + ' | reviewDone: ' + (day.reviewDone ? 'ja' : 'nein') + ' | closedAt: ' + (day.closedAt || '—') + ' | Karten: ' + day.rawCards.length + ' | Objekte: ' + day.objects.length + ' | Migrationen: ' + countMigrationLikeItems(day) + ' | Aufgaben (Preview): ' + countTaskLikeItems(day) + ' | Ereignisse (Preview): ' + countEventLikeItems(day) + ' | offene Aufgaben: ' + openTasks.length + ' | Rohsignale: ' + (compactRawCardSignals(day, 2).join(' || ') || '—'));
       });
       lines.push('');
       days.forEach(function (day) {
         lines.push('# ' + (day.date || 'Ohne Datum'));
         if (day.notes) lines.push('Notizen: ' + day.notes);
+        var openTasks = getOpenTasks(day);
         var objectSummary = buildObjectTypeSummary(day);
         var eventItems = objectSummary.event.length ? objectSummary.event.map(function (obj) { return { text: obj.text, kind: readObjectType(obj) }; }) : day.events;
-        var taskItems = objectSummary.task.length ? objectSummary.task.map(function (obj) { return { text: obj.text, status: obj.status }; }) : day.tasks;
         if (eventItems.length) {
           lines.push('Ereignisse:');
           eventItems.forEach(function (item) { lines.push('- ' + item.text + (item.kind ? ' [' + item.kind + ']' : '')); });
         }
-        if (taskItems.length) {
-          lines.push('Aufgaben:');
-          taskItems.forEach(function (item) { lines.push('- ' + item.text + (item.status ? ' [' + item.status + ']' : '')); });
+        if (openTasks.length) {
+          lines.push('Offene Aufgaben:');
+          openTasks.forEach(function (item) { lines.push('- ' + item.text + (item.status ? ' [' + item.status + ']' : '')); });
         }
         if (day.migrations.length) {
           lines.push('Migrationen:');
