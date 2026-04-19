@@ -481,6 +481,34 @@
       opacity: 1;
     }
 
+    .review-flow {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .flow-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .flow-title {
+      font-weight: 800;
+      font-size: 16px;
+      color: var(--gold);
+      margin-bottom: 4px;
+    }
+
+    .flow-help {
+      color: var(--ink-light);
+      font-size: 13px;
+      line-height: 1.5;
+      margin-bottom: 10px;
+    }
+
     .hidden { display: none !important; }
 
     @media (max-width: 980px) {
@@ -514,7 +542,7 @@
           <div class="meta-v" id="metaProgress">0 / 7</div>
         </div>
         <div class="meta-card">
-          <div class="meta-k">Offene Minuten</div>
+          <div class="meta-k">Review-Datum</div>
           <div class="meta-v" id="metaMinutes">100</div>
         </div>
         <div class="meta-card">
@@ -550,8 +578,7 @@
     var hasTriedStartupSync = false;
 
     var TABS = [
-      { id: 'dashboard', label: 'Workflow' },
-      { id: 'steps', label: 'Schritte (optional)' },
+      { id: 'dashboard', label: 'Review Flow' },
       { id: 'prompts', label: 'Prompts (optional)' },
       { id: 'data', label: 'Material & Review' },
       { id: 'export', label: 'Export' }
@@ -856,12 +883,22 @@
       return total;
     }
 
+    function reviewFlowProgress(session) {
+      var done = 0;
+      if ((session.dailyNotesRaw || '').trim() || (session.bulletJournalRaw || '').trim() || (session.convertedDays || '').trim() || (session.dailyLogReadMeta && session.dailyLogReadMeta.lastAppliedAt)) done++;
+      if ((session.reviewPeriodLabel || '').trim() || (session.reviewPeriodPreset || '').trim() || (session.reviewPeriodStart || '').trim() || (session.reviewPeriodEnd || '').trim()) done++;
+      if ((session.quantData || '').trim()) done++;
+      if ((session.annotations || '').trim()) done++;
+      if ((session.reviewResult || '').trim() || (session.nextWeekPreview || '').trim()) done++;
+      return done;
+    }
+
     function updateMeta() {
       var session = getSession();
       if (!session) return;
       document.getElementById('metaWeek').textContent = session.weekLabel || '—';
-      document.getElementById('metaProgress').textContent = completedCount(session) + ' / ' + DEFAULT_STEPS.length;
-      document.getElementById('metaMinutes').textContent = String(remainingMinutes(session));
+      document.getElementById('metaProgress').textContent = reviewFlowProgress(session) + ' / 5';
+      document.getElementById('metaMinutes').textContent = session.reviewDate || '—';
       document.getElementById('metaSaved').textContent = session.updatedAt ? new Date(session.updatedAt).toLocaleString('de-DE') : '—';
     }
 
@@ -1016,14 +1053,105 @@
       renderAll();
     }
 
+
+    function reviewFlowHTML(session) {
+      var dailyLogSourceHtml = renderDailyLogSourceHTML(session);
+      var selectionHtml = renderDailyLogSelectionHTML(session);
+      var reviewPeriodHtml = renderReviewPeriodHTML(session);
+      return `
+        <div class="review-flow">
+          <div class="flow-section">
+            <div class="flow-title">1) Material laden</div>
+            <div class="flow-help">Importiere die Read-only Daily-Log-Quelle und übernimm den gewünschten Ausschnitt für diese Session.</div>
+            <div class="notice info" style="margin-bottom:10px">Externe Daily-Log-Daten werden nur gelesen. Diese App schreibt nicht zurück.</div>
+            ${dailyLogSourceHtml}
+            <div style="height:10px"></div>
+            ${selectionHtml}
+          </div>
+
+          <div class="flow-section">
+            <div class="flow-title">2) Zeitraum festlegen</div>
+            <div class="flow-help">Definiere den Scope für die Weekly Review. Woche oder Zeitraum funktionieren unabhängig voneinander.</div>
+            ${reviewPeriodHtml}
+          </div>
+
+          <div class="flow-section">
+            <div class="flow-title">3) Quant-Daten</div>
+            <div class="flow-help">Optional: Ergänze quantitative Eingaben wie Daylio, Toggl, Gewohnheiten oder Bewegungsdaten.</div>
+            <label>Quantitative Wochen-Daten</label>
+            <textarea onchange="patchSession('quantData', this.value)" placeholder="Daylio, Toggl, Habits, Sport, Bewegung">${esc(session.quantData)}</textarea>
+          </div>
+
+          <div class="flow-section">
+            <div class="flow-title">4) Anmerkungen</div>
+            <div class="flow-help">Sammle qualitative Beobachtungen, Muster, Korrekturen oder Fokuspunkte für die Review.</div>
+            <label>Anmerkungen / diktierte Zusatzgedanken</label>
+            <textarea onchange="patchSession('annotations', this.value)" placeholder="Muster, Ergänzungen, Korrekturen, Fokusstellen">${esc(session.annotations)}</textarea>
+          </div>
+
+          <div class="flow-section">
+            <div class="flow-title">5) Review generieren</div>
+            <div class="flow-help">Erzeuge den Startprompt für die Weekly Review direkt aus dem aktuellen Session-Stand.</div>
+            <div class="btn-row">
+              <button class="btn btn-v" onclick="buildPrompt('startWeeklyReview', true)">Review-Startprompt kopieren</button>
+              <button class="btn btn-s" onclick="previewPrompt('startWeeklyReview')">Im Prompt-Studio anzeigen</button>
+            </div>
+          </div>
+
+          <details class="flow-section">
+            <summary class="flow-title" style="cursor:pointer">Legacy / Advanced</summary>
+            <div class="flow-help">Der alte Schrittbereich bleibt verfügbar, ist aber nicht mehr Teil des primären Weekly-Review-Flows.</div>
+            <div class="btn-row">
+              <button class="btn btn-m" onclick="switchTab('steps')">Legacy-Schritte öffnen</button>
+              <button class="btn btn-m" onclick="switchTab('prompts')">Prompt-Studio öffnen</button>
+              <button class="btn btn-s" onclick="switchTab('data')">Material & Review (Detailansicht)</button>
+            </div>
+          </details>
+        </div>
+      `;
+    }
+
     function dashboardHTML(session) {
-      var progress = Math.round((completedCount(session) / DEFAULT_STEPS.length) * 100);
-      var nextOpen = DEFAULT_STEPS.find(function (def) {
-        var step = session.steps.find(function (s) { return s.id === def.id; });
-        return !step || !step.done;
-      });
       var reviewPeriodLabel = getReviewPeriodLabel(session);
-      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Workflow-Session</div>\n              <div class="notice">Fokus dieser App: 1) Material laden, 2) Scope setzen, 3) Quant-Daten ergänzen, 4) Anmerkungen festhalten, 5) Weekly Review schreiben.</div>\n              <label>Wochenlabel</label>\n              <input value="' + esc(session.weekLabel) + '" onchange="patchSession(\'weekLabel\', this.value)" placeholder="z. B. KW 14 – 2026" />\n              <label>Review-Datum</label>\n              <input type="date" value="' + esc(session.reviewDate || today()) + '" onchange="patchSession(\'reviewDate\', this.value)" />\n              <div class="small" style="margin-top:6px"><strong>Aktiver Review-Scope:</strong> ' + esc(reviewPeriodLabel) + '</div>\n              <label>Letzter Review-/Kontext-Chat (optional)</label>\n              <input value="' + esc(session.lastWeeklyLogUrl) + '" onchange="patchSession(\'lastWeeklyLogUrl\', this.value)" placeholder="https://chatgpt.com/..." />\n              <label>Aktueller Fokus dieser Review</label>\n              <textarea class="compact" onchange="patchSession(\'currentFocus\', this.value)" placeholder="Was soll diese Review diesmal besonders klären?">' + esc(session.currentFocus) + '</textarea>\n              <label>Wöchentliche Intention</label>\n              <textarea class="compact" onchange="patchSession(\'weeklyIntent\', this.value)" placeholder="Wofür machst du diese Weekly Review konkret?">' + esc(session.weeklyIntent) + '</textarea>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Fortschritt</div>\n              <div class="small">' + completedCount(session) + ' von ' + DEFAULT_STEPS.length + ' Hilfsschritten erledigt. Offene Minuten: ' + remainingMinutes(session) + '.</div>\n              <div class="progress"><div class="progress-fill" style="width:' + progress + '%"></div></div>\n              <div class="small" style="margin-top:10px">Nächster offener Hilfsschritt: <strong>' + esc(nextOpen ? nextOpen.title : 'Alles erledigt') + '</strong></div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="switchTab(\'steps\')">Hilfsschritte öffnen</button>\n                <button class="btn btn-m" onclick="switchTab(\'prompts\')">Promptbereich öffnen</button>\n                <button class="btn btn-s" onclick="switchTab(\'data\')">Zu Material & Review</button>\n              </div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Session-Aktionen</div>\n              <div class="btn-row">\n                <button class="btn btn-v" onclick="newSession()">Neue Session</button>\n                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>\n                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>\n              </div>\n              <div class="small" style="margin-top:12px">Du kannst Wochen getrennt als Sessions führen. Alles wird lokal gespeichert.</div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Review-Flow kompakt</div>\n              <table class="table-lite">\n                <tr><th>Bereich</th><th>Ziel</th></tr>\n                <tr><td>Material</td><td>Daily-Log-Material laden und Quellen prüfen.</td></tr>\n                <tr><td>Scope</td><td>Review-Zeitraum festlegen, der später wirklich reflektiert wird.</td></tr>\n                <tr><td>Quant-Daten</td><td>Metriken und migrationsnahe Daten ergänzen.</td></tr>\n                <tr><td>Anmerkungen</td><td>Qualitative Beobachtungen und Muster notieren.</td></tr>\n                <tr><td>Review</td><td>Erkenntnisse in eine zusammenhängende Weekly Review überführen.</td></tr>\n              </table>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktive Sessions</div>\n              <div class="session-list">' + sessionListHTML() + '</div>\n            </div>\n          </div>\n        </div>\n      ';
+      return `
+        <div class="grid-2">
+          <div>
+            <div class="qs">
+              <div class="qh">Review-Session</div>
+              <div class="notice">Neuer linearer Weekly-Review-Flow: Material laden → Zeitraum festlegen → Quant-Daten → Anmerkungen → Review generieren.</div>
+              <label>Wochenlabel</label>
+              <input value="${esc(session.weekLabel)}" onchange="patchSession('weekLabel', this.value)" placeholder="z. B. KW 14 – 2026" />
+              <label>Review-Datum</label>
+              <input type="date" value="${esc(session.reviewDate || today())}" onchange="patchSession('reviewDate', this.value)" />
+              <div class="small" style="margin-top:6px"><strong>Aktiver Review-Scope:</strong> ${esc(reviewPeriodLabel)}</div>
+              <label>Letzter Review-/Kontext-Chat (optional)</label>
+              <input value="${esc(session.lastWeeklyLogUrl)}" onchange="patchSession('lastWeeklyLogUrl', this.value)" placeholder="https://chatgpt.com/..." />
+            </div>
+
+            <div class="qs">
+              <div class="qh">Review Flow</div>
+              ${reviewFlowHTML(session)}
+            </div>
+          </div>
+
+          <div>
+            <div class="qs">
+              <div class="qh">Session-Aktionen</div>
+              <div class="btn-row">
+                <button class="btn btn-v" onclick="newSession()">Neue Session</button>
+                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>
+                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>
+              </div>
+              <div class="small" style="margin-top:12px">Sessions bleiben lokal gespeichert und können unabhängig voneinander gepflegt werden.</div>
+            </div>
+
+            <div class="qs">
+              <div class="qh">Aktive Sessions</div>
+              <div class="session-list">${sessionListHTML()}</div>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
     function sessionListHTML() {
@@ -1031,7 +1159,7 @@
         var active = session.id === S.currentSessionId ? 'active' : '';
         return '<div class="session-item ' + active + '" onclick="switchSession(\'' + session.id + '\')">' +
           '<strong>' + esc(session.weekLabel || 'Ohne Titel') + '</strong>' +
-          '<div class="small">' + completedCount(session) + ' / ' + DEFAULT_STEPS.length + ' erledigt · ' + remainingMinutes(session) + ' Min offen</div>' +
+          '<div class="small">Review Flow: ' + reviewFlowProgress(session) + ' / 5 ausgefüllt</div>' +
           '<div class="small">Zuletzt: ' + esc(new Date(session.updatedAt).toLocaleString('de-DE')) + '</div>' +
           '</div>';
       }).join('');
