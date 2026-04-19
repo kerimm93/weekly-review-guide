@@ -501,8 +501,8 @@
     <div class="htbox">
       <h1>Weekly Review Orchestrator</h1>
       <div class="sub">
-        Leit-App für deinen Weekly-Review-Ablauf mit Prompt-Weitergabe. Sie bildet den groben Neurolist-Flow ab,
-        hält Session-Daten lokal fest und generiert dir pro Schritt kopierbare GPT-Prompts.
+        Leit-App für deinen Weekly-Review-Workflow: Material importieren, Scope festlegen, Quant-Daten ergänzen,
+        Anmerkungen sammeln und daraus die Weekly Review schreiben. Session-Daten bleiben lokal, Prompttexte sind unterstützend.
       </div>
       <div class="top-meta">
         <div class="meta-card">
@@ -550,10 +550,10 @@
     var hasTriedStartupSync = false;
 
     var TABS = [
-      { id: 'dashboard', label: 'Dashboard' },
-      { id: 'steps', label: 'Schritte' },
-      { id: 'prompts', label: 'Prompt Studio' },
-      { id: 'data', label: 'Session-Daten' },
+      { id: 'dashboard', label: 'Workflow' },
+      { id: 'steps', label: 'Schritte (optional)' },
+      { id: 'prompts', label: 'Prompts (optional)' },
+      { id: 'data', label: 'Material & Review' },
       { id: 'export', label: 'Export' }
     ];
 
@@ -1023,7 +1023,7 @@
         return !step || !step.done;
       });
       var reviewPeriodLabel = getReviewPeriodLabel(session);
-      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Wochensession</div>\n              <div class="notice">Hier steuerst du die Review wie in deinem Neurolist-Ablauf: erst Material schließen, dann strukturieren, dann den Weekly-Log-Chat mit dem eigentlichen Review anwerfen.</div>\n              <label>Wochenlabel</label>\n              <input value="' + esc(session.weekLabel) + '" onchange="patchSession(\'weekLabel\', this.value)" placeholder="z. B. KW 14 – 2026" />\n              <label>Review-Datum</label>\n              <input type="date" value="' + esc(session.reviewDate || today()) + '" onchange="patchSession(\'reviewDate\', this.value)" />\n              <div class="small" style="margin-top:6px"><strong>Review-Zeitraum:</strong> ' + esc(reviewPeriodLabel) + '</div>\n              <label>Letzter Weekly-Log-Chat / URL</label>\n              <input value="' + esc(session.lastWeeklyLogUrl) + '" onchange="patchSession(\'lastWeeklyLogUrl\', this.value)" placeholder="https://chatgpt.com/..." />\n              <label>Aktueller Fokus dieser Review</label>\n              <textarea class="compact" onchange="patchSession(\'currentFocus\', this.value)" placeholder="Was soll diese Review diesmal besonders klären?">' + esc(session.currentFocus) + '</textarea>\n              <label>Wöchentliche Intention</label>\n              <textarea class="compact" onchange="patchSession(\'weeklyIntent\', this.value)" placeholder="Wofür machst du diese Weekly Review konkret?">' + esc(session.weeklyIntent) + '</textarea>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Fortschritt</div>\n              <div class="small">' + completedCount(session) + ' von ' + DEFAULT_STEPS.length + ' Schritten erledigt. Offene Minuten: ' + remainingMinutes(session) + '.</div>\n              <div class="progress"><div class="progress-fill" style="width:' + progress + '%"></div></div>\n              <div class="small" style="margin-top:10px">Nächster offener Schritt: <strong>' + esc(nextOpen ? nextOpen.title : 'Alles erledigt') + '</strong></div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="switchTab(\'steps\')">Zur Schrittliste</button>\n                <button class="btn btn-m" onclick="switchTab(\'prompts\')">Zum Prompt Studio</button>\n                <button class="btn btn-s" onclick="switchTab(\'data\')">Zur Datenansicht</button>\n              </div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Session-Aktionen</div>\n              <div class="btn-row">\n                <button class="btn btn-v" onclick="newSession()">Neue Session</button>\n                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>\n                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>\n              </div>\n              <div class="small" style="margin-top:12px">Du kannst Wochen getrennt als Sessions führen. Alles wird lokal gespeichert.</div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Review-Logik kompakt</div>\n              <table class="table-lite">\n                <tr><th>Phase</th><th>Ziel</th></tr>\n                <tr><td>Vorbereitung</td><td>Daily Notes schließen, Tage umformen, Annotationen diktieren.</td></tr>\n                <tr><td>Datenbasis</td><td>Quantitative Daten und migrierte Aufgaben festhalten.</td></tr>\n                <tr><td>Weekly Log</td><td>Letzten Weekly-Log-Kontext öffnen und Review mit klarer Input-Reihenfolge starten.</td></tr>\n                <tr><td>Review</td><td>Beobachtung, Interpretation und Entscheidung sauber trennen.</td></tr>\n              </table>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktive Sessions</div>\n              <div class="session-list">' + sessionListHTML() + '</div>\n            </div>\n          </div>\n        </div>\n      ';
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Workflow-Session</div>\n              <div class="notice">Fokus dieser App: 1) Material laden, 2) Scope setzen, 3) Quant-Daten ergänzen, 4) Anmerkungen festhalten, 5) Weekly Review schreiben.</div>\n              <label>Wochenlabel</label>\n              <input value="' + esc(session.weekLabel) + '" onchange="patchSession(\'weekLabel\', this.value)" placeholder="z. B. KW 14 – 2026" />\n              <label>Review-Datum</label>\n              <input type="date" value="' + esc(session.reviewDate || today()) + '" onchange="patchSession(\'reviewDate\', this.value)" />\n              <div class="small" style="margin-top:6px"><strong>Aktiver Review-Scope:</strong> ' + esc(reviewPeriodLabel) + '</div>\n              <label>Letzter Review-/Kontext-Chat (optional)</label>\n              <input value="' + esc(session.lastWeeklyLogUrl) + '" onchange="patchSession(\'lastWeeklyLogUrl\', this.value)" placeholder="https://chatgpt.com/..." />\n              <label>Aktueller Fokus dieser Review</label>\n              <textarea class="compact" onchange="patchSession(\'currentFocus\', this.value)" placeholder="Was soll diese Review diesmal besonders klären?">' + esc(session.currentFocus) + '</textarea>\n              <label>Wöchentliche Intention</label>\n              <textarea class="compact" onchange="patchSession(\'weeklyIntent\', this.value)" placeholder="Wofür machst du diese Weekly Review konkret?">' + esc(session.weeklyIntent) + '</textarea>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Fortschritt</div>\n              <div class="small">' + completedCount(session) + ' von ' + DEFAULT_STEPS.length + ' Hilfsschritten erledigt. Offene Minuten: ' + remainingMinutes(session) + '.</div>\n              <div class="progress"><div class="progress-fill" style="width:' + progress + '%"></div></div>\n              <div class="small" style="margin-top:10px">Nächster offener Hilfsschritt: <strong>' + esc(nextOpen ? nextOpen.title : 'Alles erledigt') + '</strong></div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="switchTab(\'steps\')">Hilfsschritte öffnen</button>\n                <button class="btn btn-m" onclick="switchTab(\'prompts\')">Promptbereich öffnen</button>\n                <button class="btn btn-s" onclick="switchTab(\'data\')">Zu Material & Review</button>\n              </div>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Session-Aktionen</div>\n              <div class="btn-row">\n                <button class="btn btn-v" onclick="newSession()">Neue Session</button>\n                <button class="btn btn-s" onclick="duplicateSession()">Duplizieren</button>\n                <button class="btn btn-d" onclick="deleteSession()">Löschen</button>\n              </div>\n              <div class="small" style="margin-top:12px">Du kannst Wochen getrennt als Sessions führen. Alles wird lokal gespeichert.</div>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Review-Flow kompakt</div>\n              <table class="table-lite">\n                <tr><th>Bereich</th><th>Ziel</th></tr>\n                <tr><td>Material</td><td>Daily-Log-Material laden und Quellen prüfen.</td></tr>\n                <tr><td>Scope</td><td>Review-Zeitraum festlegen, der später wirklich reflektiert wird.</td></tr>\n                <tr><td>Quant-Daten</td><td>Metriken und migrationsnahe Daten ergänzen.</td></tr>\n                <tr><td>Anmerkungen</td><td>Qualitative Beobachtungen und Muster notieren.</td></tr>\n                <tr><td>Review</td><td>Erkenntnisse in eine zusammenhängende Weekly Review überführen.</td></tr>\n              </table>\n            </div>\n\n            <div class="qs">\n              <div class="qh">Aktive Sessions</div>\n              <div class="session-list">' + sessionListHTML() + '</div>\n            </div>\n          </div>\n        </div>\n      ';
     }
 
     function sessionListHTML() {
@@ -1038,7 +1038,7 @@
     }
 
     function stepsHTML(session) {
-      return '<div class="notice info">Jeder Schritt hat einen eigenen Prompt-Button. Du kannst dir dadurch genau den Text erzeugen lassen, den du im passenden GPT-Chat weitergibst.</div>' +
+      return '<div class="notice info">Dieser Bereich ist optional. Wenn du strukturierte Zwischenstände brauchst, kannst du hier Hilfsschritte abhaken und bei Bedarf Prompttexte erzeugen.</div>' +
         '<div class="step-list">' +
         DEFAULT_STEPS.map(function (def) {
           var st = session.steps.find(function (s) { return s.id === def.id; }) || { done: false, notes: '', artifacts: '', promptNotes: '' };
@@ -1098,7 +1098,7 @@
     }
 
     function promptsHTML(session) {
-      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Generator</div>\n              <div class="notice">Hier erzeugst du die Texte für den jeweiligen GPT-Chat. Die Inhalte greifen auf deine Session-Felder und Schritt-Notizen zu.</div>\n              <div class="btn-row">' + promptButtonsHTML() + '</div>\n              <label>Letzte Review-Zusammenfassung / Ergebnis</label>\n              <textarea onchange="patchSession(\'reviewResult\', this.value)" placeholder="Hier kannst du das Ergebnis der Weekly Review oder eine Zwischenfassung parken.">' + esc(session.reviewResult) + '</textarea>\n              <label>Nächste-Woche-Vorschau / Planung</label>\n              <textarea class="compact" onchange="patchSession(\'nextWeekPreview\', this.value)" placeholder="Deadlines, Fokus, erste Planungspunkte">' + esc(session.nextWeekPreview) + '</textarea>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Ausgabe</div>\n              <div class="prompt-output" id="promptOutput">Wähle links einen Prompt aus oder nutze in der Schrittliste einen der Copy-Buttons.</div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="copyPromptOutput()">Ausgabe kopieren</button>\n                <button class="btn btn-v" onclick="buildPrompt(\'startWeeklyReview\', true)">Review-Start sofort kopieren</button>\n              </div>\n            </div>\n          </div>\n        </div>\n      ';
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Hilfen (optional)</div>\n              <div class="notice">Hier erzeugst du bei Bedarf wiederverwendbare Prompttexte für Material-, Scope- und Review-Arbeit. Der Workflow funktioniert auch ohne diesen Bereich.</div>\n              <div class="btn-row">' + promptButtonsHTML() + '</div>\n              <label>Letzte Review-Zusammenfassung / Ergebnis</label>\n              <textarea onchange="patchSession(\'reviewResult\', this.value)" placeholder="Hier kannst du das Ergebnis der Weekly Review oder eine Zwischenfassung parken.">' + esc(session.reviewResult) + '</textarea>\n              <label>Nächste-Woche-Vorschau / Planung</label>\n              <textarea class="compact" onchange="patchSession(\'nextWeekPreview\', this.value)" placeholder="Deadlines, Fokus, erste Planungspunkte">' + esc(session.nextWeekPreview) + '</textarea>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Ausgabe</div>\n              <div class="prompt-output" id="promptOutput">Wähle links einen Prompt aus oder nutze optional die Copy-Buttons aus der Schrittliste.</div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="copyPromptOutput()">Ausgabe kopieren</button>\n                <button class="btn btn-v" onclick="buildPrompt(\'startWeeklyReview\', true)">Review-Start sofort kopieren</button>\n              </div>\n            </div>\n          </div>\n        </div>\n      ';
     }
 
     function dataHTML(session) {
@@ -1112,22 +1112,22 @@
         <div class="grid-2">
           <div>
             <div class="qs">
-              <div class="qh">Externe Daily-Log-Quelle <span class="badge-readonly">Read-only</span></div>
+              <div class="qh">Material: Externe Daily-Log-Quelle <span class="badge-readonly">Read-only</span></div>
               ${dailyLogSourceHtml}
             </div>
 
             <div class="qs">
-              <div class="qh">Woche / Datumsbereich aus Daily Log</div>
+              <div class="qh">Material: Import-Auswahl</div>
               ${selectionHtml}
             </div>
 
             <div class="qs">
-              <div class="qh">Review-Kontext</div>
+              <div class="qh">Scope: Review-Zeitraum</div>
               ${reviewPeriodHtml}
             </div>
 
             <div class="qs">
-              <div class="qh">Rohmaterial</div>
+              <div class="qh">Anmerkungen: Arbeitsnotizen</div>
               <label>Daily Notes dieser Woche</label>
               <textarea onchange="patchSession('dailyNotesRaw', this.value)" placeholder="Hier Rohtext, Dateiinhalt oder Sammelblock einfügen">${esc(session.dailyNotesRaw)}</textarea>
               <label>Bullet-Journal-Rohmaterial / Tage der Woche</label>
@@ -1141,22 +1141,22 @@
 
           <div>
             <div class="qs">
-              <div class="qh">Geladene Tagesdaten-Vorschau</div>
+              <div class="qh">Material: Import-Vorschau</div>
               ${previewHtml}
             </div>
 
             <div class="qs">
-              <div class="qh">Kompakte Wochenübersicht (Lesansicht)</div>
+              <div class="qh">Review: Kompakte Lesansicht</div>
               ${renderCompactWeeklyReviewHTML(session)}
             </div>
 
             <div class="qs">
-              <div class="qh">Migrationshorizonte der gewählten Woche</div>
+              <div class="qh">Review: Migrationshorizonte im Scope</div>
               ${migrationHtml}
             </div>
 
             <div class="qs">
-              <div class="qh">Ergänzende Daten</div>
+              <div class="qh">Quant-Daten & Review-Kontext</div>
               <label>Quantitative Wochen-Daten</label>
               <textarea onchange="patchSession('quantData', this.value)" placeholder="Daylio, Toggl, Habits, Sport, Bewegung">${esc(session.quantData)}</textarea>
               <label>Migrierte Aufgaben</label>
@@ -1843,6 +1843,47 @@
       });
     }
 
+    function getReviewPeriodDays(session) {
+      var days = (S.dailyLogReadCache && S.dailyLogReadCache.days) || [];
+      if (!days.length) return [];
+      if (!session) return getSelectedDailyLogDays(session);
+      ensureReviewPeriodState(session);
+      if (session.reviewPeriodMode === 'range') {
+        var hasStart = !!session.reviewPeriodStart;
+        var hasEnd = !!session.reviewPeriodEnd;
+        if (!hasStart && !hasEnd) return getSelectedDailyLogDays(session);
+        var ranged = days.filter(function (day) {
+          if (!day.date) return false;
+          if (session.reviewPeriodStart && day.date < session.reviewPeriodStart) return false;
+          if (session.reviewPeriodEnd && day.date > session.reviewPeriodEnd) return false;
+          return true;
+        });
+        return ranged.length ? ranged : getSelectedDailyLogDays(session);
+      }
+      var weekKey = session.reviewPeriodPreset || '';
+      if (!weekKey && session.reviewPeriodStart && session.reviewPeriodEnd) {
+        var byDates = days.filter(function (day) {
+          if (!day.date) return false;
+          return day.date >= session.reviewPeriodStart && day.date <= session.reviewPeriodEnd;
+        });
+        if (byDates.length) return byDates;
+      }
+      if (!weekKey) return getSelectedDailyLogDays(session);
+      var weekMatch = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === weekKey; });
+      if (weekMatch) {
+        var byWeekRange = days.filter(function (day) {
+          if (!day.date) return false;
+          return day.date >= weekMatch.start && day.date <= weekMatch.end;
+        });
+        return byWeekRange.length ? byWeekRange : getSelectedDailyLogDays(session);
+      }
+      var byIsoWeek = days.filter(function (day) {
+        var info = day.date ? isoWeekInfo(day.date) : null;
+        return info && info.key === weekKey;
+      });
+      return byIsoWeek.length ? byIsoWeek : getSelectedDailyLogDays(session);
+    }
+
     function getSelectedDailyLogLabel(session) {
       var sel = session.dailyLogSelection || blankSession().dailyLogSelection;
       if (sel.mode === 'range') {
@@ -2142,11 +2183,11 @@
     function renderDailyLogPreviewHTML(session) {
       var days = getSelectedDailyLogDays(session);
       if (!days.length) {
-        return '<div class="small">Für die aktuelle Auswahl liegen keine robust erkannten Daily-Log-Tage vor.</div>';
+        return '<div class="small">Für die aktuelle Import-Auswahl liegen keine robust erkannten Daily-Log-Tage vor.</div>';
       }
       return `
         <div class="small" style="margin-bottom:10px">Quelle: ${esc(session.dailyLogReadMeta.sourceKind || S.dailyLogReadCache.sourceKind || 'external_read_only_gist')} · ID: ${esc(session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—')} · Datei: ${esc(session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—')}</div>
-        <div class="small" style="margin-bottom:10px">Auswahl: <strong>${esc(getSelectedDailyLogLabel(session))}</strong></div>
+        <div class="small" style="margin-bottom:10px">Import-Auswahl: <strong>${esc(getSelectedDailyLogLabel(session))}</strong></div>
         <table class="table-lite">
           <tr><th>Datum</th><th>Notizen</th><th>Aufgaben</th><th>Ereignisse</th><th>Migrationen</th><th>Ideen</th><th>Zitate</th></tr>
           ${days.map(function (day) {
@@ -2191,7 +2232,7 @@
     }
 
     function renderCompactWeeklyReviewHTML(session) {
-      var days = getSelectedDailyLogDays(session);
+      var days = getReviewPeriodDays(session);
       if (!days.length) return '<div class="small">Keine Tage für die kompakte Wochenübersicht gewählt.</div>';
       var rows = days.map(function (day) {
         var sig = buildCompactDaySignals(day);
@@ -2232,7 +2273,7 @@
     }
 
     function renderWeeklyTaskOverviewHTML(session) {
-      var days = getSelectedDailyLogDays(session);
+      var days = getReviewPeriodDays(session);
       var overview = buildWeeklyTaskOverview(days);
       return `
         <div class="notice">Die Trennung erfolgt nur, wenn der Zielhorizont aus den gelesenen Daily-Log-Daten robust hervorgeht.</div>
@@ -2265,7 +2306,7 @@
     }
 
     function buildSelectedDailyLogPromptText(session) {
-      var days = getSelectedDailyLogDays(session);
+      var days = getReviewPeriodDays(session);
       if (!days.length) return 'KEINE AUSWAHL ODER KEINE ROBUST ERKANNTEN DAILY-LOG-TAGE AUS DER READ-ONLY-QUELLE (GIST ODER ZIP-IMPORT).';
       var lines = [];
       lines.push('DAILY-LOG-READ-ONLY-QUELLE (GIST ODER ZIP-IMPORT)');
@@ -2273,7 +2314,7 @@
       lines.push('Quelle-ID: ' + (session.dailyLogReadMeta.sourceGistId || S.dailyLogReadCache.gistId || '—'));
       lines.push('Datei: ' + (session.dailyLogReadMeta.sourceFile || S.dailyLogReadCache.fileName || '—'));
       lines.push('Geladen am: ' + (session.dailyLogReadMeta.loadedAt || S.dailyLogReadCache.loadedAt || '—'));
-      lines.push('Auswahl: ' + getSelectedDailyLogLabel(session));
+      lines.push('Import-Auswahl: ' + getSelectedDailyLogLabel(session));
       lines.push('Review-Zeitraum: ' + getReviewPeriodLabel(session));
       lines.push('');
       lines.push('');
