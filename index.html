@@ -372,6 +372,40 @@
       line-height: 1.55;
     }
 
+    .quant-import-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .quant-import-card {
+      background: rgba(0,0,0,.18);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .quant-import-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 8px 0;
+    }
+
+    .quant-import-preview {
+      max-height: 180px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      background: rgba(0,0,0,.22);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
     .session-list {
       display: grid;
       gap: 10px;
@@ -683,6 +717,10 @@
         .replace(/"/g, '&quot;');
     }
 
+    function jsString(s) {
+      return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+
     function toast(msg) {
       var t = document.getElementById('toast');
       t.textContent = msg;
@@ -720,6 +758,7 @@
         bulletJournalRaw: '',
         convertedDays: '',
         annotations: '',
+        quantImports: [],
         quantData: '',
         migratedTasks: '',
         previousWeeklyLogSummary: '',
@@ -803,6 +842,7 @@
         if (!session.dailyLogSelection) session.dailyLogSelection = JSON.parse(JSON.stringify(fresh.dailyLogSelection));
         if (!session.dailyLogReadMeta) session.dailyLogReadMeta = JSON.parse(JSON.stringify(fresh.dailyLogReadMeta));
         if (!session.weeklyTaskOverview) session.weeklyTaskOverview = JSON.parse(JSON.stringify(fresh.weeklyTaskOverview));
+        ensureQuantImports(session);
         ensureReviewPeriodState(session);
         session.updatedAt = session.updatedAt || session.createdAt || new Date().toISOString();
       });
@@ -887,7 +927,7 @@
       var done = 0;
       if ((session.dailyNotesRaw || '').trim() || (session.bulletJournalRaw || '').trim() || (session.convertedDays || '').trim() || (session.dailyLogReadMeta && session.dailyLogReadMeta.lastAppliedAt)) done++;
       if ((session.reviewPeriodLabel || '').trim() || (session.reviewPeriodPreset || '').trim() || (session.reviewPeriodStart || '').trim() || (session.reviewPeriodEnd || '').trim()) done++;
-      if ((session.quantData || '').trim()) done++;
+      if ((session.quantData || '').trim() || (ensureQuantImports(session).length > 0)) done++;
       if ((session.annotations || '').trim()) done++;
       if ((session.reviewResult || '').trim() || (session.nextWeekPreview || '').trim()) done++;
       return done;
@@ -1054,10 +1094,224 @@
     }
 
 
+    function ensureQuantImports(session) {
+      if (!session || typeof session !== 'object') return [];
+      if (!Array.isArray(session.quantImports)) session.quantImports = [];
+      var allowedSources = ['toggl', 'habitica', 'bank', 'sport', 'nutrition', 'sleep', 'other'];
+      var allowedKinds = ['json', 'csv', 'text'];
+      session.quantImports = session.quantImports.map(function (item) {
+        var imp = (item && typeof item === 'object' && !Array.isArray(item)) ? item : {};
+        if (!imp.id || typeof imp.id !== 'string') imp.id = uid();
+        if (allowedSources.indexOf(imp.source) === -1) imp.source = 'other';
+        if (imp.label == null) imp.label = '';
+        if (imp.fileName == null) imp.fileName = '';
+        if (imp.mimeType == null) imp.mimeType = '';
+        if (typeof imp.size !== 'number' || !isFinite(imp.size)) imp.size = 0;
+        if (!imp.importedAt || typeof imp.importedAt !== 'string') imp.importedAt = new Date().toISOString();
+        if (imp.reviewPeriodLabel == null) imp.reviewPeriodLabel = getReviewPeriodLabel(session);
+        if (imp.reviewPeriodStart == null) imp.reviewPeriodStart = session.reviewPeriodStart || '';
+        if (imp.reviewPeriodEnd == null) imp.reviewPeriodEnd = session.reviewPeriodEnd || '';
+        if (imp.rawText == null) imp.rawText = '';
+        if (typeof imp.rawText !== 'string') imp.rawText = String(imp.rawText);
+        if (imp.parsedJson === undefined) imp.parsedJson = null;
+        if (allowedKinds.indexOf(imp.parseKind) === -1) {
+          imp.parseKind = looksLikeJsonFile(imp.fileName) || imp.parsedJson !== null ? 'json' : (looksLikeCsvFile(imp.fileName) ? 'csv' : 'text');
+        }
+        return imp;
+      });
+      return session.quantImports;
+    }
+
+    function looksLikeJsonFile(name) {
+      return /\.json$/i.test(String(name || '').trim());
+    }
+
+    function looksLikeCsvFile(name) {
+      return /\.csv$/i.test(String(name || '').trim());
+    }
+
+    function getQuantImportSourceLabel(source) {
+      var labels = {
+        toggl: 'Toggl',
+        habitica: 'Habitica',
+        bank: 'Konto / Bank',
+        sport: 'Sport',
+        nutrition: 'Ernährung',
+        sleep: 'Schlaf',
+        other: 'Sonstiges'
+      };
+      return labels[source] || labels.other;
+    }
+
+    function formatBytes(size) {
+      var n = Number(size) || 0;
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function renderQuantImportsHTML(session, prefix) {
+      prefix = prefix || 'quant';
+      var imports = ensureQuantImports(session);
+      var sourceId = 'quantImportSource-' + prefix;
+      var labelId = 'quantImportLabel-' + prefix;
+      var fileId = 'quantImportFile-' + prefix;
+      var cards = imports.length ? imports.map(function (imp) {
+        var title = getQuantImportSourceLabel(imp.source) + ' — ' + (imp.label || imp.fileName || 'Ohne Label');
+        var importedAt = imp.importedAt ? new Date(imp.importedAt).toLocaleString('de-DE') : '—';
+        var period = imp.reviewPeriodLabel || [imp.reviewPeriodStart, imp.reviewPeriodEnd].filter(Boolean).join(' – ') || '—';
+        var preview = (imp.rawText || '').slice(0, 500);
+        return '<div class="quant-import-card">' +
+          '<div class="qh" style="margin-bottom:6px">' + esc(title) + '</div>' +
+          '<div class="quant-import-meta">' +
+            '<span class="pill">Quelle: ' + esc(getQuantImportSourceLabel(imp.source)) + '</span>' +
+            '<span class="pill">Label: ' + esc(imp.label || '—') + '</span>' +
+            '<span class="pill">Datei: ' + esc(imp.fileName || '—') + '</span>' +
+            '<span class="pill">Import: ' + esc(importedAt) + '</span>' +
+            '<span class="pill">Zeitraum: ' + esc(period) + '</span>' +
+            '<span class="pill">Format: ' + esc(imp.parseKind || 'text') + '</span>' +
+            '<span class="pill">Größe: ' + esc(formatBytes(imp.size)) + '</span>' +
+          '</div>' +
+          '<div class="quant-import-preview">' + esc(preview || 'Keine Vorschau verfügbar.') + '</div>' +
+          '<div class="btn-row" style="margin-top:10px"><button class="btn btn-d" onclick="removeQuantImport(\'' + jsString(imp.id) + '\')">Entfernen</button></div>' +
+        '</div>';
+      }).join('') : '<div class="small">Noch keine strukturierten Quant-Dateien importiert.</div>';
+      return '<div class="notice info">Dateien werden lokal als vollständige Rohdaten in dieser Session gespeichert. JSON wird zusätzlich parsebar abgelegt; CSV/TXT bleiben vollständig als Rohtext erhalten.</div>' +
+        '<label for="' + sourceId + '">Quelle wählen</label>' +
+        '<select id="' + sourceId + '">' +
+          '<option value="toggl">Toggl</option>' +
+          '<option value="habitica">Habitica</option>' +
+          '<option value="bank">Konto / Bank</option>' +
+          '<option value="sport">Sport</option>' +
+          '<option value="nutrition">Ernährung</option>' +
+          '<option value="sleep">Schlaf</option>' +
+          '<option value="other">Sonstiges</option>' +
+        '</select>' +
+        '<label for="' + labelId + '">Optionales Label</label>' +
+        '<input id="' + labelId + '" placeholder="z. B. Toggl KW 19, Kontodaten Mai, Habitica Export" />' +
+        '<label for="' + fileId + '">Datei wählen</label>' +
+        '<input id="' + fileId + '" type="file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" />' +
+        '<div class="btn-row" style="margin-top:12px">' +
+          '<button class="btn btn-v" onclick="importQuantFile(\'' + jsString(prefix) + '\')">Quant-Datei importieren</button>' +
+          (imports.length ? '<button class="btn btn-d" onclick="clearQuantImports()">Alle Quant-Imports entfernen</button>' : '') +
+        '</div>' +
+        '<div class="quant-import-list">' + cards + '</div>';
+    }
+
+    async function importQuantFile(prefix) {
+      prefix = prefix || 'quant';
+      var session = getSession();
+      if (!session) return;
+      var fileInput = document.getElementById('quantImportFile-' + prefix);
+      var sourceInput = document.getElementById('quantImportSource-' + prefix);
+      var labelInput = document.getElementById('quantImportLabel-' + prefix);
+      var file = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      if (!file) {
+        toast('Bitte zuerst eine Quant-Datei wählen');
+        return;
+      }
+      try {
+        var rawText = await file.text();
+        if (!rawText || !rawText.trim()) throw new Error('Die gewählte Quant-Datei ist leer');
+        var parsedJson = null;
+        var parseKind = looksLikeCsvFile(file.name) ? 'csv' : 'text';
+        var jsonCandidate = looksLikeJsonFile(file.name) || !looksLikeCsvFile(file.name);
+        if (jsonCandidate) {
+          try {
+            parsedJson = JSON.parse(rawText);
+            parseKind = 'json';
+          } catch (jsonError) {}
+        }
+        if (parsedJson === null && looksLikeJsonFile(file.name)) parseKind = 'json';
+        ensureQuantImports(session).unshift({
+          id: uid(),
+          source: sourceInput ? sourceInput.value : 'other',
+          label: labelInput ? labelInput.value.trim() : '',
+          fileName: file.name || '',
+          mimeType: file.type || '',
+          size: file.size || rawText.length,
+          importedAt: new Date().toISOString(),
+          reviewPeriodLabel: getReviewPeriodLabel(session),
+          reviewPeriodStart: session.reviewPeriodStart || '',
+          reviewPeriodEnd: session.reviewPeriodEnd || '',
+          rawText: rawText,
+          parsedJson: parsedJson,
+          parseKind: parseKind
+        });
+        save();
+        renderAll();
+        toast('Quant-Datei importiert');
+      } catch (e) {
+        var msg = (e && e.message) ? e.message : String(e);
+        toast('Quant-Import fehlgeschlagen: ' + msg);
+        alert('Quant-Import fehlgeschlagen: ' + msg);
+      }
+    }
+
+    function removeQuantImport(id) {
+      var session = getSession();
+      if (!session) return;
+      var before = ensureQuantImports(session).length;
+      session.quantImports = session.quantImports.filter(function (imp) { return imp.id !== id; });
+      if (session.quantImports.length === before) {
+        toast('Quant-Import nicht gefunden');
+        return;
+      }
+      save();
+      renderAll();
+      toast('Quant-Import entfernt');
+    }
+
+    function clearQuantImports() {
+      var session = getSession();
+      if (!session) return;
+      if (!ensureQuantImports(session).length) return;
+      var ok = confirm('Alle strukturierten Quant-Imports dieser Session entfernen?');
+      if (!ok) return;
+      session.quantImports = [];
+      save();
+      renderAll();
+      toast('Quant-Imports entfernt');
+    }
+
+    function buildQuantImportsPromptText(session) {
+      var imports = ensureQuantImports(session);
+      var lines = ['STRUKTURIERTE QUANT-IMPORTE'];
+      if (!imports.length) {
+        lines.push('Keine strukturierten Quant-Imports hinterlegt.');
+        return lines.join('\n');
+      }
+      imports.forEach(function (imp, idx) {
+        var sourceLabel = getQuantImportSourceLabel(imp.source);
+        var title = imp.label || imp.fileName || 'Ohne Label';
+        var period = imp.reviewPeriodLabel || [imp.reviewPeriodStart, imp.reviewPeriodEnd].filter(Boolean).join(' – ') || '—';
+        var kind = imp.parseKind || 'text';
+        lines.push('## Import ' + (idx + 1) + ': ' + sourceLabel + ' — ' + title);
+        lines.push('- Datei: ' + (imp.fileName || '—'));
+        lines.push('- Importiert am: ' + (imp.importedAt || '—'));
+        lines.push('- Review-Zeitraum beim Import: ' + period);
+        lines.push('- Format: ' + kind);
+        lines.push('');
+        if (kind === 'json' && imp.parsedJson !== null) {
+          lines.push('```json');
+          lines.push(JSON.stringify(imp.parsedJson, null, 2));
+          lines.push('```');
+        } else {
+          lines.push('```text');
+          lines.push(imp.rawText || '');
+          lines.push('```');
+        }
+        lines.push('');
+      });
+      return lines.join('\n');
+    }
+
+
     function reviewFlowHTML(session) {
       var dailyLogSourceHtml = renderDailyLogSourceHTML(session);
       var selectionHtml = renderDailyLogSelectionHTML(session);
       var reviewPeriodHtml = renderReviewPeriodHTML(session);
+      var quantImportsHtml = renderQuantImportsHTML(session, 'flow');
       return `
         <div class="review-flow">
           <div class="flow-section">
@@ -1077,9 +1331,11 @@
 
           <div class="flow-section">
             <div class="flow-title">3) Quant-Daten</div>
-            <div class="flow-help">Optional: Ergänze quantitative Eingaben wie Daylio, Toggl, Gewohnheiten oder Bewegungsdaten.</div>
-            <label>Quantitative Wochen-Daten</label>
-            <textarea onchange="patchSession('quantData', this.value)" placeholder="Daylio, Toggl, Habits, Sport, Bewegung">${esc(session.quantData)}</textarea>
+            <div class="flow-help">Optional: Importiere vollständige Quant-Rohdaten als Datei oder ergänze manuelle Copy/Paste-Daten.</div>
+            <div class="qh" style="margin-top:12px">Strukturierte Quant-Imports</div>
+            ${quantImportsHtml}
+            <label>Freie quantitative Daten / manuelle Ergänzungen</label>
+            <textarea onchange="patchSession('quantData', this.value)" placeholder="Manuell bereinigte Kontodaten, Sonderdaten, Copy/Paste aus neuen Quellen">${esc(session.quantData)}</textarea>
           </div>
 
           <div class="flow-section">
@@ -1235,6 +1491,7 @@
       var reviewPeriodHtml = renderReviewPeriodHTML(session);
       var previewHtml = renderDailyLogPreviewHTML(session);
       var migrationHtml = renderWeeklyTaskOverviewHTML(session);
+      var quantImportsHtml = renderQuantImportsHTML(session, 'data');
 
       return `
         <div class="grid-2">
@@ -1285,8 +1542,10 @@
 
             <div class="qs">
               <div class="qh">Quant-Daten & Review-Kontext</div>
-              <label>Quantitative Wochen-Daten</label>
-              <textarea onchange="patchSession('quantData', this.value)" placeholder="Daylio, Toggl, Habits, Sport, Bewegung">${esc(session.quantData)}</textarea>
+              <div class="qh" style="margin-top:4px">Strukturierte Quant-Imports</div>
+              ${quantImportsHtml}
+              <label>Freie quantitative Daten / manuelle Ergänzungen</label>
+              <textarea onchange="patchSession('quantData', this.value)" placeholder="Manuell bereinigte Kontodaten, Sonderdaten, Copy/Paste aus neuen Quellen">${esc(session.quantData)}</textarea>
               <label>Migrierte Aufgaben</label>
               <textarea onchange="patchSession('migratedTasks', this.value)" placeholder="Finale Aufgabenliste / Transferliste">${esc(session.migratedTasks)}</textarea>
               <label>Zusammenfassung des letzten Weekly Logs</label>
@@ -2681,7 +2940,10 @@
           'Ordne meine quantitativen Wochen-Daten so vor, dass sie später in die Weekly Review eingespeist werden können.',
           '',
           'INPUT',
-          session.quantData || 'Keine quantitativen Daten hinterlegt.',
+          buildQuantImportsPromptText(session),
+          '',
+          'FREIE QUANTITATIVE DATEN',
+          session.quantData || 'Keine freien quantitativen Daten hinterlegt.',
           '',
           'REGELN',
           '- Nur strukturieren und lesbar machen.',
@@ -2771,7 +3033,10 @@
           session.dailyNotesRaw || 'Noch keine Daily Notes hinterlegt.',
           '',
           'INPUT 2 – EXTERNE WOCHEN-DATEN (OPTIONAL)',
-          session.quantData || 'Keine quantitativen Daten hinterlegt.',
+          buildQuantImportsPromptText(session),
+          '',
+          'FREIE QUANTITATIVE DATEN',
+          session.quantData || 'Keine freien quantitativen Daten hinterlegt.',
           '',
           'INPUT 3 – LETZTER WEEKLY LOG / KONTEXT',
           [session.previousWeeklyLogSummary, session.lastWeeklyLogUrl].filter(Boolean).join('\n') || 'Kein alter Weekly-Log-Kontext hinterlegt.',
@@ -3261,6 +3526,40 @@
       toast('Markdown exportiert');
     }
 
+
+    function buildQuantImportsMarkdown(session) {
+      var imports = ensureQuantImports(session);
+      var lines = ['## Strukturierte Quant-Imports', ''];
+      if (!imports.length) {
+        lines.push('—', '');
+        return lines.join('\n');
+      }
+      imports.forEach(function (imp) {
+        var title = getQuantImportSourceLabel(imp.source) + ' — ' + (imp.label || imp.fileName || 'Ohne Label');
+        var period = imp.reviewPeriodLabel || [imp.reviewPeriodStart, imp.reviewPeriodEnd].filter(Boolean).join(' – ') || '—';
+        var kind = imp.parseKind || 'text';
+        lines.push('### ' + title);
+        lines.push('');
+        lines.push('* Datei: ' + (imp.fileName || '—'));
+        lines.push('* Importiert am: ' + (imp.importedAt || '—'));
+        lines.push('* Zeitraum: ' + period);
+        lines.push('* Format: ' + kind);
+        lines.push('* Größe: ' + formatBytes(imp.size));
+        lines.push('');
+        if (kind === 'json' && imp.parsedJson !== null) {
+          lines.push('```json');
+          lines.push(JSON.stringify(imp.parsedJson, null, 2));
+          lines.push('```');
+        } else {
+          lines.push('```text');
+          lines.push(imp.rawText || '');
+          lines.push('```');
+        }
+        lines.push('');
+      });
+      return lines.join('\n');
+    }
+
     function buildMarkdown(session) {
       var lines = [];
       lines.push('# Weekly Review – ' + (session.weekLabel || 'Ohne Titel'));
@@ -3285,13 +3584,17 @@
         ['Bullet Journal', session.bulletJournalRaw],
         ['Umgewandelte Tage', session.convertedDays],
         ['Anmerkungen', session.annotations],
-        ['Quantitative Daten', session.quantData],
         ['Migrierte Aufgaben', session.migratedTasks],
         ['Migrationshorizonte', buildWeeklyTaskOverviewPromptText(session)],
         ['Vorheriger Weekly-Log-Kontext', session.previousWeeklyLogSummary],
         ['Review-Ergebnis', session.reviewResult],
         ['Nächste Woche', session.nextWeekPreview]
       ];
+      lines.push(buildQuantImportsMarkdown(session));
+      lines.push('## Quantitative Daten');
+      lines.push('');
+      lines.push(session.quantData || '—');
+      lines.push('');
       fields.forEach(function (pair) {
         lines.push('## ' + pair[0]);
         lines.push('');
