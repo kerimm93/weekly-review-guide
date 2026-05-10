@@ -1670,6 +1670,306 @@
       toast('Quant-Imports entfernt');
     }
 
+    function quantImportPeriodLabel(imp) {
+      return imp.reviewPeriodLabel || [imp.reviewPeriodStart, imp.reviewPeriodEnd].filter(Boolean).join(' – ') || '—';
+    }
+
+    function formatDurationFromMinutes(minutes) {
+      var n = Math.max(0, Math.round(Number(minutes) || 0));
+      var hours = Math.floor(n / 60);
+      var mins = n % 60;
+      if (hours <= 0) return mins + 'min';
+      if (mins <= 0) return hours + 'h';
+      return hours + 'h ' + mins + 'min';
+    }
+
+    function formatDurationFromSeconds(seconds) {
+      return formatDurationFromMinutes((Number(seconds) || 0) / 60);
+    }
+
+    function localDateKey(value) {
+      if (!value) return 'Ohne Datum';
+      var raw = String(value);
+      var dateMatch = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (dateMatch) return dateMatch[1];
+      var d = new Date(value);
+      if (isNaN(d.getTime())) return raw.slice(0, 10) || 'Ohne Datum';
+      var y = d.getFullYear();
+      var m = String(d.getMonth() + 1).padStart(2, '0');
+      var day = String(d.getDate()).padStart(2, '0');
+      return y + '-' + m + '-' + day;
+    }
+
+    function localTimeLabel(value) {
+      if (!value) return '';
+      var raw = String(value);
+      var match = raw.match(/T(\d{1,2}:\d{2})/) || raw.match(/^(\d{1,2}:\d{2})/);
+      if (match) return match[1];
+      var d = new Date(value);
+      if (isNaN(d.getTime())) return '';
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    }
+
+    function parseJsonOrNull(text) {
+      if (!text || typeof text !== 'string') return null;
+      try { return JSON.parse(text); } catch (e) { return null; }
+    }
+
+    function safeArray(value) {
+      return Array.isArray(value) ? value : [];
+    }
+
+    function compactValueLabel(value) {
+      if (value === null || value === undefined || value === '') return '';
+      if (Array.isArray(value)) return value.filter(function (item) { return item !== null && item !== undefined && item !== ''; }).join(', ');
+      if (typeof value === 'object') return '';
+      return String(value);
+    }
+
+    function compactQuantItem(item) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return compactValueLabel(item) || String(item);
+      var technicalKeys = {
+        id: true,
+        _id: true,
+        uuid: true,
+        uid: true,
+        user_id: true,
+        userId: true,
+        workspace_id: true,
+        project_id: true,
+        task_id: true,
+        tag_ids: true,
+        wid: true,
+        pid: true,
+        tid: true,
+        duronly: true,
+        at: true,
+        server_deleted_at: true,
+        endpoint: true,
+        rawResponses: true,
+        apiToken: true,
+        token: true
+      };
+      var parts = [];
+      Object.keys(item).forEach(function (key) {
+        if (technicalKeys[key] || parts.length >= 8) return;
+        var label = compactValueLabel(item[key]);
+        if (label) parts.push(key + ': ' + label);
+      });
+      return parts.join(' · ') || '(keine kompakten Felder)';
+    }
+
+    function getParsedQuantJson(imp) {
+      if (imp.parsedJson !== null && imp.parsedJson !== undefined) return imp.parsedJson;
+      return parseJsonOrNull(imp.rawText);
+    }
+
+    function normalizeTogglEntry(entry) {
+      if (!entry || typeof entry !== 'object') return null;
+      var start = entry.start_local || entry.start || entry.start_utc || entry.startTime || entry.startedAt || entry.started_at || '';
+      var stop = entry.stop_local || entry.stop || entry.stop_utc || entry.end || entry.endTime || entry.endedAt || entry.ended_at || '';
+      var durationSeconds = Number(entry.duration_seconds);
+      if (!isFinite(durationSeconds)) durationSeconds = Number(entry.durationSeconds);
+      if (!isFinite(durationSeconds)) durationSeconds = Number(entry.duration);
+      if (!isFinite(durationSeconds)) durationSeconds = Number(entry.seconds);
+      if (!isFinite(durationSeconds) && isFinite(Number(entry.duration_minutes))) durationSeconds = Number(entry.duration_minutes) * 60;
+      if (!isFinite(durationSeconds) && isFinite(Number(entry.durationMinutes))) durationSeconds = Number(entry.durationMinutes) * 60;
+      if (!isFinite(durationSeconds) && isFinite(Number(entry.minutes))) durationSeconds = Number(entry.minutes) * 60;
+      if (!isFinite(durationSeconds) && isFinite(Number(entry.duration_hours))) durationSeconds = Number(entry.duration_hours) * 3600;
+      if (!isFinite(durationSeconds) && start && stop) {
+        var startDate = new Date(start);
+        var stopDate = new Date(stop);
+        if (!isNaN(startDate.getTime()) && !isNaN(stopDate.getTime())) durationSeconds = Math.max(0, (stopDate.getTime() - startDate.getTime()) / 1000);
+      }
+      if (!isFinite(durationSeconds) || durationSeconds < 0) durationSeconds = 0;
+      var tags = [];
+      if (Array.isArray(entry.tags)) tags = entry.tags.slice();
+      else if (typeof entry.tags === 'string') tags = entry.tags.split(',').map(function (tag) { return tag.trim(); }).filter(Boolean);
+      var description = entry.description || entry.title || entry.name || '(ohne Beschreibung)';
+      return {
+        date: entry.local_date || entry.date || entry.day || localDateKey(start || stop),
+        start: start,
+        stop: stop,
+        durationSeconds: durationSeconds,
+        description: description,
+        tags: tags
+      };
+    }
+
+    function getTogglEntriesForPrompt(imp) {
+      var json = getParsedQuantJson(imp);
+      var candidates = [];
+      if (json && json.normalizedEntries) candidates = json.normalizedEntries;
+      else if (json && json.entries) candidates = json.entries;
+      else if (Array.isArray(json)) candidates = json;
+      return safeArray(candidates).map(normalizeTogglEntry).filter(Boolean);
+    }
+
+    function buildQuantImportPromptMetaLines(imp, sourceLabel, entryCount, totalSeconds) {
+      var json = getParsedQuantJson(imp) || {};
+      var lines = [];
+      lines.push('- Quelle: ' + sourceLabel);
+      lines.push('- Label: ' + (imp.label || '—'));
+      lines.push('- Datei: ' + (imp.fileName || '—'));
+      lines.push('- Review-Zeitraum: ' + quantImportPeriodLabel(imp));
+      lines.push('- Export-/Fetch-Zeitpunkt: ' + (json.fetchedAt || json.exportedAt || json.exported || imp.importedAt || '—'));
+      if (typeof entryCount === 'number') lines.push('- Anzahl Einträge: ' + entryCount);
+      if (typeof totalSeconds === 'number') lines.push('- Gesamtzeit: ' + formatDurationFromSeconds(totalSeconds));
+      var warnings = json.meta && Array.isArray(json.meta.warnings) ? json.meta.warnings : (Array.isArray(json.warnings) ? json.warnings : []);
+      warnings.forEach(function (warning) { lines.push('- Warnung: ' + String(warning)); });
+      return lines;
+    }
+
+    function buildTogglImportPromptText(imp) {
+      var entries = getTogglEntriesForPrompt(imp);
+      var totalSeconds = entries.reduce(function (sum, entry) { return sum + (Number(entry.durationSeconds) || 0); }, 0);
+      var lines = ['## Toggl – ' + (imp.label || imp.fileName || 'Ohne Label'), ''];
+      Array.prototype.push.apply(lines, buildQuantImportPromptMetaLines(imp, 'Toggl', entries.length, totalSeconds));
+      lines.push('', '## Toggl – Tagesübersicht');
+      if (!entries.length) {
+        lines.push('Keine Toggl-Einträge in kompakter Form gefunden. Rohdaten sind im Import gespeichert; bei Bedarf gezielt anfordern.');
+        return lines.join('\n');
+      }
+      var groups = {};
+      entries.forEach(function (entry) {
+        var key = entry.date || localDateKey(entry.start || entry.stop);
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(entry);
+      });
+      Object.keys(groups).sort().forEach(function (date) {
+        var dayEntries = groups[date];
+        var daySeconds = dayEntries.reduce(function (sum, entry) { return sum + (Number(entry.durationSeconds) || 0); }, 0);
+        lines.push('', '### ' + date + ' — ' + formatDurationFromSeconds(daySeconds));
+        dayEntries.forEach(function (entry) {
+          var start = localTimeLabel(entry.start);
+          var stop = localTimeLabel(entry.stop);
+          var timePart = start && stop ? start + '–' + stop : (start || stop || '');
+          var desc = (entry.description || '').trim() || '(ohne Beschreibung)';
+          var parts = [];
+          if (timePart) parts.push(timePart);
+          parts.push(formatDurationFromSeconds(entry.durationSeconds));
+          parts.push(desc);
+          if (entry.tags && entry.tags.length) parts.push('Tags: ' + entry.tags.join(', '));
+          lines.push('- ' + parts.join(' · '));
+        });
+      });
+      return lines.join('\n');
+    }
+
+    function habiticaTaskLine(task, type) {
+      if (!task || typeof task !== 'object') return '';
+      var text = task.text || task.title || task.name || '(ohne Titel)';
+      var parts = [text];
+      var completed = task.completed;
+      if (typeof completed === 'boolean') parts.push('erledigt: ' + (completed ? 'ja' : 'nein'));
+      else if (Array.isArray(task.history) && task.history.length) parts.push('History: vorhanden');
+      else parts.push('erledigt: unklar');
+      if (type === 'daily') {
+        var frequency = task.frequency || task.repeat && Object.keys(task.repeat).filter(function (key) { return task.repeat[key]; }).join(', ');
+        if (frequency) parts.push('Rhythmus: ' + frequency);
+        if (task.everyX) parts.push('alle ' + task.everyX);
+      }
+      if (type === 'habit') {
+        if (typeof task.up === 'boolean') parts.push('up: ' + (task.up ? 'ja' : 'nein'));
+        if (typeof task.down === 'boolean') parts.push('down: ' + (task.down ? 'ja' : 'nein'));
+        if (task.counterUp !== undefined) parts.push('counterUp: ' + task.counterUp);
+        if (task.counterDown !== undefined) parts.push('counterDown: ' + task.counterDown);
+      }
+      if (type === 'todo') {
+        if (task.date) parts.push('Datum: ' + task.date);
+        if (task.dueDate) parts.push('Fällig: ' + task.dueDate);
+      }
+      if (task.notes) parts.push('Notes: ' + String(task.notes).replace(/\s+/g, ' ').trim());
+      return '- ' + parts.join(' — ');
+    }
+
+    function getHabiticaTasksForPrompt(imp) {
+      var json = getParsedQuantJson(imp) || {};
+      var tasks = json.tasks || json.data || json;
+      return {
+        habits: safeArray(tasks.habits || (Array.isArray(json.habits) ? json.habits : null)),
+        dailys: safeArray(tasks.dailys || (Array.isArray(json.dailys) ? json.dailys : null)),
+        todos: safeArray(tasks.todos || (Array.isArray(json.todos) ? json.todos : null)),
+        rewards: safeArray(json.rewards || tasks.rewards)
+      };
+    }
+
+    function buildHabiticaImportPromptText(imp) {
+      var data = getHabiticaTasksForPrompt(imp);
+      var lines = ['## Habitica – ' + (imp.label || imp.fileName || 'Ohne Label'), ''];
+      Array.prototype.push.apply(lines, buildQuantImportPromptMetaLines(imp, 'Habitica'));
+      lines.push('', '## Habitica – Überblick');
+      lines.push('- Habits: ' + data.habits.length);
+      lines.push('- Dailys: ' + data.dailys.length);
+      lines.push('- Todos: ' + data.todos.length);
+      lines.push('- Rewards: ' + data.rewards.length);
+      lines.push('', '### Dailys');
+      lines.push.apply(lines, data.dailys.length ? data.dailys.map(function (task) { return habiticaTaskLine(task, 'daily'); }) : ['- Keine Dailys gefunden.']);
+      lines.push('', '### Todos');
+      lines.push.apply(lines, data.todos.length ? data.todos.map(function (task) { return habiticaTaskLine(task, 'todo'); }) : ['- Keine Todos gefunden.']);
+      lines.push('', '### Habits');
+      lines.push.apply(lines, data.habits.length ? data.habits.map(function (task) { return habiticaTaskLine(task, 'habit'); }) : ['- Keine Habits gefunden.']);
+      if (data.rewards.length) {
+        lines.push('', '### Rewards');
+        data.rewards.forEach(function (reward) {
+          if (reward && typeof reward === 'object') lines.push('- ' + (reward.text || reward.title || reward.name || '(ohne Titel)'));
+          else lines.push('- ' + String(reward));
+        });
+      }
+      return lines.join('\n');
+    }
+
+    function buildGenericQuantImportPromptText(imp) {
+      var kind = imp.parseKind || 'text';
+      var parsed = getParsedQuantJson(imp);
+      var lines = ['## ' + getQuantImportSourceLabel(imp.source) + ' – ' + (imp.label || imp.fileName || 'Ohne Label'), ''];
+      Array.prototype.push.apply(lines, buildQuantImportPromptMetaLines(imp, getQuantImportSourceLabel(imp.source)));
+      lines.push('- Format: ' + kind);
+      lines.push('');
+      if (parsed !== null && parsed !== undefined) {
+        if (Array.isArray(parsed)) {
+          lines.push('### JSON-Überblick');
+          lines.push('- Items: ' + parsed.length);
+          lines.push('- Erste kompakte Items:');
+          parsed.slice(0, 10).forEach(function (item, idx) { lines.push('  ' + (idx + 1) + '. ' + compactQuantItem(item)); });
+          if (parsed.length > 10) lines.push('  … weitere ' + (parsed.length - 10) + ' Items nicht im Prompt ausgeschrieben.');
+        } else if (typeof parsed === 'object') {
+          var keys = Object.keys(parsed);
+          lines.push('### JSON-Überblick');
+          lines.push('- Top-Level-Keys: ' + (keys.length ? keys.join(', ') : '—'));
+          keys.slice(0, 8).forEach(function (key) {
+            var value = parsed[key];
+            if (Array.isArray(value)) lines.push('- ' + key + ': Array mit ' + value.length + ' Items');
+            else if (value && typeof value === 'object') lines.push('- ' + key + ': Objekt mit Keys ' + Object.keys(value).slice(0, 8).join(', '));
+            else lines.push('- ' + key + ': ' + (compactValueLabel(value) || '—'));
+          });
+        } else {
+          lines.push('JSON-Wert: ' + compactValueLabel(parsed));
+        }
+        lines.push('', 'Rohdaten sind im Import gespeichert; bei Bedarf gezielt anfordern.');
+        return lines.join('\n');
+      }
+      var raw = imp.rawText || '';
+      var limit = 12000;
+      if (raw.length > limit) {
+        lines.push('```text');
+        lines.push(raw.slice(0, limit));
+        lines.push('```');
+        lines.push('[gekürzt für Prompt-Ausgabe; vollständige Rohdaten sind im Import gespeichert]');
+      } else {
+        lines.push('```text');
+        lines.push(raw || '—');
+        lines.push('```');
+      }
+      return lines.join('\n');
+    }
+
+    function buildQuantImportPromptBlock(imp) {
+      if (imp.source === 'toggl') return buildTogglImportPromptText(imp);
+      if (imp.source === 'habitica') return buildHabiticaImportPromptText(imp);
+      return buildGenericQuantImportPromptText(imp);
+    }
+
     function buildQuantImportsPromptText(session) {
       var imports = ensureQuantImports(session);
       var lines = ['STRUKTURIERTE QUANT-IMPORTE'];
@@ -1678,16 +1978,28 @@
         return lines.join('\n');
       }
       imports.forEach(function (imp, idx) {
+        lines.push('', '## Import ' + (idx + 1));
+        lines.push(buildQuantImportPromptBlock(imp));
+      });
+      return lines.join('\n');
+    }
+
+    function buildQuantImportsRawPromptText(session) {
+      var imports = ensureQuantImports(session);
+      var lines = ['STRUKTURIERTE QUANT-IMPORTE – ROHDATEN'];
+      if (!imports.length) {
+        lines.push('Keine strukturierten Quant-Imports hinterlegt.');
+        return lines.join('\n');
+      }
+      imports.forEach(function (imp, idx) {
         var sourceLabel = getQuantImportSourceLabel(imp.source);
         var title = imp.label || imp.fileName || 'Ohne Label';
-        var period = imp.reviewPeriodLabel || [imp.reviewPeriodStart, imp.reviewPeriodEnd].filter(Boolean).join(' – ') || '—';
         var kind = imp.parseKind || 'text';
-        lines.push('## Import ' + (idx + 1) + ': ' + sourceLabel + ' — ' + title);
+        lines.push('', '## Import ' + (idx + 1) + ': ' + sourceLabel + ' — ' + title);
         lines.push('- Datei: ' + (imp.fileName || '—'));
         lines.push('- Importiert am: ' + (imp.importedAt || '—'));
-        lines.push('- Review-Zeitraum beim Import: ' + period);
-        lines.push('- Format: ' + kind);
-        lines.push('');
+        lines.push('- Review-Zeitraum beim Import: ' + quantImportPeriodLabel(imp));
+        lines.push('- Format: ' + kind, '');
         if (kind === 'json' && imp.parsedJson !== null) {
           lines.push('```json');
           lines.push(JSON.stringify(imp.parsedJson, null, 2));
@@ -1697,7 +2009,6 @@
           lines.push(imp.rawText || '');
           lines.push('```');
         }
-        lines.push('');
       });
       return lines.join('\n');
     }
