@@ -978,6 +978,7 @@
     function ensureReviewPeriodState(session) {
       if (!session) return;
       if (!session.reviewPeriodMode) session.reviewPeriodMode = 'week';
+      if (['week', 'range'].indexOf(session.reviewPeriodMode) === -1) session.reviewPeriodMode = 'week';
       if (session.reviewPeriodStart == null) session.reviewPeriodStart = '';
       if (session.reviewPeriodEnd == null) session.reviewPeriodEnd = '';
       if (session.reviewPeriodPreset == null) session.reviewPeriodPreset = '';
@@ -986,7 +987,31 @@
         session.reviewPeriodTouched = !!(session.reviewPeriodPreset || session.reviewPeriodStart || session.reviewPeriodEnd || session.reviewPeriodLabel);
       }
       var hasExisting = !!(session.reviewPeriodPreset || session.reviewPeriodStart || session.reviewPeriodEnd || session.reviewPeriodLabel);
-      if (!hasExisting && !session.reviewPeriodTouched) applyDailyLogSelectionToReviewPeriod(session, true, false);
+      if (!hasExisting && !session.reviewPeriodTouched && hasConcreteDailyLogSelection(session)) {
+        applyDailyLogSelectionToReviewPeriod(session, true, false);
+      }
+      refreshReviewPeriodLabel(session);
+    }
+
+    function hasConcreteDailyLogSelection(session) {
+      var sel = session && session.dailyLogSelection ? session.dailyLogSelection : null;
+      if (!sel) return false;
+      if (sel.mode === 'range') return !!(sel.rangeStart || sel.rangeEnd);
+      return !!sel.weekKey;
+    }
+
+    function refreshReviewPeriodLabel(session) {
+      if (!session) return;
+      if (session.reviewPeriodMode === 'range') {
+        session.reviewPeriodLabel = (session.reviewPeriodStart || 'offen') + ' → ' + (session.reviewPeriodEnd || 'offen');
+        return;
+      }
+      if (session.reviewPeriodPreset) {
+        var match = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === session.reviewPeriodPreset; });
+        session.reviewPeriodLabel = match ? match.label : session.reviewPeriodPreset;
+      } else if (!session.reviewPeriodLabel || session.reviewPeriodLabel.indexOf(' → ') !== -1) {
+        session.reviewPeriodLabel = '';
+      }
     }
 
     function getReviewPeriodLabel(session) {
@@ -1011,7 +1036,11 @@
       var label = getReviewPeriodLabel(session);
       var start = isIsoDateString(session.reviewPeriodStart) ? session.reviewPeriodStart : '';
       var end = isIsoDateString(session.reviewPeriodEnd) ? session.reviewPeriodEnd : '';
-      if (start && end) return { start: start, end: end, label: label };
+
+      if (session.reviewPeriodMode === 'range') {
+        if (start && end) return { start: start, end: end, label: label };
+        throw new Error('Kein sauberer Review-Zeitraum ableitbar. Bitte setze Start und Ende im Review Flow oder direkt im API-Bereich.');
+      }
 
       if (session.reviewPeriodMode === 'week' && session.reviewPeriodPreset) {
         var weekMatch = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === session.reviewPeriodPreset; });
@@ -1020,17 +1049,20 @@
         }
       }
 
+      if (start && end) return { start: start, end: end, label: label };
+
       var days = getReviewPeriodDays(session).filter(function (day) { return day && isIsoDateString(day.date); });
       if (days.length) {
         var dates = days.map(function (day) { return day.date; }).sort();
         return { start: dates[0], end: dates[dates.length - 1], label: label };
       }
 
-      throw new Error('Kein sauberer Review-Zeitraum ableitbar. Bitte wähle im Review Flow einen Wochen- oder Datumsbereich aus.');
+      throw new Error('Kein sauberer Review-Zeitraum ableitbar. Bitte setze im Review Flow oder direkt im API-Bereich einen API-Zeitraum.');
     }
 
     function applyDailyLogSelectionToReviewPeriod(session, silent, markTouched) {
       if (!session) return;
+      if (!markTouched && session.reviewPeriodTouched) return;
       if (!session.reviewPeriodMode) session.reviewPeriodMode = 'week';
       if (session.reviewPeriodStart == null) session.reviewPeriodStart = '';
       if (session.reviewPeriodEnd == null) session.reviewPeriodEnd = '';
@@ -1043,15 +1075,14 @@
         session.reviewPeriodStart = sel.rangeStart || '';
         session.reviewPeriodEnd = sel.rangeEnd || '';
         session.reviewPeriodPreset = '';
-        session.reviewPeriodLabel = (sel.rangeStart || 'offen') + ' → ' + (sel.rangeEnd || 'offen');
       } else {
         var match = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === sel.weekKey; });
         session.reviewPeriodMode = 'week';
         session.reviewPeriodPreset = sel.weekKey || '';
         session.reviewPeriodStart = match ? match.start : '';
         session.reviewPeriodEnd = match ? match.end : '';
-        session.reviewPeriodLabel = match ? match.label : (sel.weekKey || '');
       }
+      refreshReviewPeriodLabel(session);
       if (markTouched) session.reviewPeriodTouched = true;
       if (!silent) {
         save();
@@ -1064,19 +1095,41 @@
       var session = getSession();
       if (!session) return;
       ensureReviewPeriodState(session);
-      session[field] = value;
       session.reviewPeriodTouched = true;
-      if (field === 'reviewPeriodMode' && value === 'week' && !session.reviewPeriodPreset && S.dailyLogReadCache.weeks.length) {
-        session.reviewPeriodPreset = S.dailyLogReadCache.weeks[0].key;
+      if (field === 'reviewPeriodMode') {
+        session.reviewPeriodMode = value === 'range' ? 'range' : 'week';
+        if (session.reviewPeriodMode === 'range') {
+          session.reviewPeriodPreset = '';
+        } else if (!session.reviewPeriodPreset && S.dailyLogReadCache.weeks.length) {
+          session.reviewPeriodPreset = S.dailyLogReadCache.weeks[0].key;
+        }
+      } else if (field === 'reviewPeriodPreset') {
+        session.reviewPeriodPreset = value;
+        session.reviewPeriodMode = 'week';
+      } else if (field === 'reviewPeriodStart' || field === 'reviewPeriodEnd') {
+        session[field] = value;
+        session.reviewPeriodMode = 'range';
+        session.reviewPeriodPreset = '';
+      } else {
+        session[field] = value;
       }
-      if (field === 'reviewPeriodPreset') {
-        var match = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === value; });
-        session.reviewPeriodLabel = match ? match.label : '';
-        session.reviewPeriodStart = match ? match.start : session.reviewPeriodStart;
-        session.reviewPeriodEnd = match ? match.end : session.reviewPeriodEnd;
+      if (session.reviewPeriodMode === 'week' && session.reviewPeriodPreset) {
+        var match = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === session.reviewPeriodPreset; });
+        session.reviewPeriodLabel = match ? match.label : session.reviewPeriodPreset;
+        if (match) {
+          session.reviewPeriodStart = match.start;
+          session.reviewPeriodEnd = match.end;
+        }
+      } else {
+        refreshReviewPeriodLabel(session);
       }
       save();
       renderAll();
+    }
+
+    function patchApiRange(field, value) {
+      if (field !== 'reviewPeriodStart' && field !== 'reviewPeriodEnd') return;
+      patchReviewPeriod(field, value);
     }
 
     function newSession() {
@@ -1234,6 +1287,9 @@
     function apiFetchErrorMessage(source, e) {
       var msg = (e && e.message) ? e.message : String(e || 'Unbekannter Fehler');
       if (msg.indexOf('Failed to fetch') !== -1 || msg.indexOf('NetworkError') !== -1 || msg.indexOf('Load failed') !== -1) {
+        if (source === 'Toggl') {
+          return 'Toggl konnte aus dem Browser nicht geladen werden. Vermutlich CORS/Browser-Blockade. Nutze den Dateiimport als Fallback. Details: ' + msg;
+        }
         return source + ': Netzwerkfehler oder CORS-Blockade. Details: ' + msg;
       }
       return source + ': ' + msg;
@@ -1422,7 +1478,10 @@
         if (rewardsRaw && rewardsRaw.error) payload.errors = [{ endpoint: '/api/v3/tasks/user?type=rewards', message: rewardsRaw.error }];
         addQuantImportFromApi(session, 'habitica', 'Habitica API ' + getReviewPeriodLabel(session), range, payload);
       } catch (e) {
-        var msg = apiFetchErrorMessage('Habitica', e);
+        var rawMsg = (e && e.message) ? e.message : String(e || 'Unbekannter Fehler');
+        var msg = rawMsg.indexOf('Review-Zeitraum') !== -1 || rawMsg.indexOf('API-Zeitraum') !== -1 || rawMsg.indexOf('Zeitraum') !== -1
+          ? 'Bitte erst im Review Flow oder direkt im API-Bereich einen API-Zeitraum setzen.'
+          : apiFetchErrorMessage('Habitica', e);
         toast('Habitica-Import fehlgeschlagen');
         alert('Habitica-Import fehlgeschlagen: ' + msg);
       }
@@ -1446,6 +1505,17 @@
       var habiticaUserId = 'quantApiHabiticaUserId-' + prefix;
       var habiticaTokenId = 'quantApiHabiticaToken-' + prefix;
       var habiticaClientId = 'quantApiHabiticaClient-' + prefix;
+      var apiRangeHtml = '';
+      try {
+        var apiRange = getReviewPeriodDateRange(session);
+        apiRangeHtml = '<div class="notice success"><strong>Aktiver API-Zeitraum:</strong> ' + esc(apiRange.start) + ' → ' + esc(apiRange.end) + ' / ' + esc(apiRange.label || '—') + '</div>';
+      } catch (e) {
+        apiRangeHtml = '<div class="notice warn"><strong>Kein API-Zeitraum gesetzt</strong><br><span class="small">Bitte im Review Flow oder direkt hier Start und Ende setzen.</span></div>';
+      }
+      var apiRangeInputsHtml = '<div class="grid-2" style="margin-top:10px">' +
+        '<div><label>API-Zeitraum Start</label><input type="date" value="' + esc(session.reviewPeriodStart || '') + '" onchange="patchApiRange(\'reviewPeriodStart\', this.value)" /></div>' +
+        '<div><label>API-Zeitraum Ende</label><input type="date" value="' + esc(session.reviewPeriodEnd || '') + '" onchange="patchApiRange(\'reviewPeriodEnd\', this.value)" /></div>' +
+      '</div>';
       var cards = imports.length ? imports.map(function (imp) {
         var title = getQuantImportSourceLabel(imp.source) + ' — ' + (imp.label || imp.fileName || 'Ohne Label');
         var importedAt = imp.importedAt ? new Date(imp.importedAt).toLocaleString('de-DE') : '—';
@@ -1471,9 +1541,12 @@
           '<div class="qh">Direkter API-Import</div>' +
           '<div class="notice info">Credentials werden nur lokal im Browser gespeichert und nicht exportiert oder synchronisiert.</div>' +
           '<div class="notice">API-Tokens werden nur lokal im Browser gespeichert. Die abgerufenen Daten selbst werden als Quant-Import in dieser Session gespeichert und können in Export, Prompt und Gist-Sync einfließen.</div>' +
+          apiRangeHtml +
+          apiRangeInputsHtml +
           '<div class="grid-2" style="margin-top:10px">' +
             '<div>' +
               '<div class="qh" style="font-size:14px">Toggl</div>' +
+              '<div class="small" style="margin-bottom:8px">Falls der Browserimport blockiert wird, nutze den Quant-Dateiimport mit einem lokalen Toggl-Export.</div>' +
               '<label for="' + togglTokenId + '">Toggl API Token</label>' +
               '<input id="' + togglTokenId + '" type="password" value="' + esc(cfg.togglToken) + '" onchange="patchQuantApiCredential(QUANT_TOGGL_TOKEN_KEY, this.value)" placeholder="Toggl API Token" />' +
               '<div class="btn-row" style="margin-top:10px">' +
@@ -2883,6 +2956,7 @@
           <input type="date" value="${esc(session.reviewPeriodStart || '')}" onchange="patchReviewPeriod('reviewPeriodStart', this.value)" />
           <label>Review-Zeitraum Ende</label>
           <input type="date" value="${esc(session.reviewPeriodEnd || '')}" onchange="patchReviewPeriod('reviewPeriodEnd', this.value)" />
+          <div class="small" style="margin-top:8px">Aktuell: <strong>${esc(getReviewPeriodLabel(session))}</strong></div>
         `}
         <div class="btn-row" style="margin-top:12px">
           <button class="btn btn-q" onclick="applyDailyLogSelectionToReviewPeriod(getSession(), false, true)">Daily-Log-Auswahl als Review-Zeitraum übernehmen</button>
