@@ -608,6 +608,10 @@
     var AUTO_SYNC_DELAY = 30000;
     var DAILY_LOG_READ_GIST_ID_KEY = 'weekly_review_orchestrator_dailylog_read_gist_id';
     var DAILY_LOG_READ_TOKEN_KEY = 'weekly_review_orchestrator_dailylog_read_token';
+    var QUANT_TOGGL_TOKEN_KEY = 'weekly_review_quant_toggl_token';
+    var QUANT_HABITICA_USER_ID_KEY = 'weekly_review_quant_habitica_user_id';
+    var QUANT_HABITICA_API_TOKEN_KEY = 'weekly_review_quant_habitica_api_token';
+    var QUANT_HABITICA_CLIENT_KEY = 'weekly_review_quant_habitica_client';
     var autoSyncTimer = null;
     var hasTriedStartupSync = false;
 
@@ -997,6 +1001,34 @@
       return session.reviewPeriodPreset || 'Keine Woche gewählt';
     }
 
+    function isIsoDateString(value) {
+      return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+    }
+
+    function getReviewPeriodDateRange(session) {
+      if (!session) throw new Error('Keine aktive Session für den Review-Zeitraum gefunden');
+      ensureReviewPeriodState(session);
+      var label = getReviewPeriodLabel(session);
+      var start = isIsoDateString(session.reviewPeriodStart) ? session.reviewPeriodStart : '';
+      var end = isIsoDateString(session.reviewPeriodEnd) ? session.reviewPeriodEnd : '';
+      if (start && end) return { start: start, end: end, label: label };
+
+      if (session.reviewPeriodMode === 'week' && session.reviewPeriodPreset) {
+        var weekMatch = (S.dailyLogReadCache.weeks || []).find(function (week) { return week.key === session.reviewPeriodPreset; });
+        if (weekMatch && isIsoDateString(weekMatch.start) && isIsoDateString(weekMatch.end)) {
+          return { start: weekMatch.start, end: weekMatch.end, label: label };
+        }
+      }
+
+      var days = getReviewPeriodDays(session).filter(function (day) { return day && isIsoDateString(day.date); });
+      if (days.length) {
+        var dates = days.map(function (day) { return day.date; }).sort();
+        return { start: dates[0], end: dates[dates.length - 1], label: label };
+      }
+
+      throw new Error('Kein sauberer Review-Zeitraum ableitbar. Bitte wähle im Review Flow einen Wochen- oder Datumsbereich aus.');
+    }
+
     function applyDailyLogSelectionToReviewPeriod(session, silent, markTouched) {
       if (!session) return;
       if (!session.reviewPeriodMode) session.reviewPeriodMode = 'week';
@@ -1143,6 +1175,259 @@
       return labels[source] || labels.other;
     }
 
+    function getQuantApiConfig() {
+      return {
+        togglToken: (localStorage.getItem(QUANT_TOGGL_TOKEN_KEY) || '').trim(),
+        habiticaUserId: (localStorage.getItem(QUANT_HABITICA_USER_ID_KEY) || '').trim(),
+        habiticaApiToken: (localStorage.getItem(QUANT_HABITICA_API_TOKEN_KEY) || '').trim(),
+        habiticaClient: (localStorage.getItem(QUANT_HABITICA_CLIENT_KEY) || '').trim()
+      };
+    }
+
+    function setQuantApiCredential(key, value) {
+      var allowed = [QUANT_TOGGL_TOKEN_KEY, QUANT_HABITICA_USER_ID_KEY, QUANT_HABITICA_API_TOKEN_KEY, QUANT_HABITICA_CLIENT_KEY];
+      if (allowed.indexOf(key) === -1) return;
+      var clean = (value || '').trim();
+      if (clean) localStorage.setItem(key, clean);
+      else localStorage.removeItem(key);
+    }
+
+    function patchQuantApiCredential(key, value) {
+      setQuantApiCredential(key, value);
+      toast('API-Credential lokal gespeichert');
+    }
+
+    function clearQuantApiCredentials(source) {
+      var scope = source || 'all';
+      if (scope === 'toggl' || scope === 'all') localStorage.removeItem(QUANT_TOGGL_TOKEN_KEY);
+      if (scope === 'habitica' || scope === 'all') {
+        localStorage.removeItem(QUANT_HABITICA_USER_ID_KEY);
+        localStorage.removeItem(QUANT_HABITICA_API_TOKEN_KEY);
+        localStorage.removeItem(QUANT_HABITICA_CLIENT_KEY);
+      }
+      renderAll();
+      toast('API-Credentials lokal gelöscht');
+    }
+
+    function hasTogglCredentials() {
+      return !!getQuantApiConfig().togglToken;
+    }
+
+    function hasHabiticaCredentials() {
+      var cfg = getQuantApiConfig();
+      return !!(cfg.habiticaUserId && cfg.habiticaApiToken && cfg.habiticaClient);
+    }
+
+    function togglAuthHeader(token) {
+      return 'Basic ' + btoa(token + ':api_token');
+    }
+
+    function habiticaHeaders(config) {
+      return {
+        'x-api-user': config.habiticaUserId,
+        'x-api-key': config.habiticaApiToken,
+        'x-client': config.habiticaClient,
+        'Accept': 'application/json'
+      };
+    }
+
+    function apiFetchErrorMessage(source, e) {
+      var msg = (e && e.message) ? e.message : String(e || 'Unbekannter Fehler');
+      if (msg.indexOf('Failed to fetch') !== -1 || msg.indexOf('NetworkError') !== -1 || msg.indexOf('Load failed') !== -1) {
+        return source + ': Netzwerkfehler oder CORS-Blockade. Details: ' + msg;
+      }
+      return source + ': ' + msg;
+    }
+
+    async function readJsonResponseOrThrow(res, source) {
+      var text = await res.text();
+      if (!res.ok) throw new Error('HTTP ' + res.status + (text ? ' – ' + text.slice(0, 300) : ''));
+      if (!text || !text.trim()) throw new Error('Leere Antwort von ' + source);
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        throw new Error('Antwort von ' + source + ' ist kein gültiges JSON');
+      }
+    }
+
+    function addQuantImportFromApi(session, source, label, range, payload) {
+      if (!session) throw new Error('Keine aktive Session gefunden');
+      var rawText = JSON.stringify(payload, null, 2);
+      ensureQuantImports(session).unshift({
+        id: uid(),
+        source: source,
+        label: label,
+        fileName: source + '-api-' + range.start + '_to_' + range.end + '.json',
+        mimeType: 'application/json',
+        size: rawText.length,
+        importedAt: new Date().toISOString(),
+        reviewPeriodLabel: range.label,
+        reviewPeriodStart: range.start,
+        reviewPeriodEnd: range.end,
+        rawText: rawText,
+        parsedJson: payload,
+        parseKind: 'json'
+      });
+      save();
+      renderAll();
+      toast(getQuantImportSourceLabel(source) + ' API importiert');
+    }
+
+    function getTogglTimeEntriesEndpoint(range) {
+      return 'https://api.track.toggl.com/api/v9/me/time_entries?start_date=' + encodeURIComponent(range.start) + '&end_date=' + encodeURIComponent(range.end);
+    }
+
+    async function testTogglConnection(prefix) {
+      var cfg = getQuantApiConfig();
+      if (!cfg.togglToken) {
+        toast('Toggl API Token fehlt');
+        return;
+      }
+      try {
+        var range = { start: today(), end: today(), label: 'Heute' };
+        var endpoint = getTogglTimeEntriesEndpoint(range);
+        var res = await fetchWithTimeoutRetry(endpoint, {
+          method: 'GET',
+          headers: {
+            'Authorization': togglAuthHeader(cfg.togglToken),
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        }, 15000, 0);
+        await readJsonResponseOrThrow(res, 'Toggl');
+        toast('Toggl-Zugang OK');
+      } catch (e) {
+        alert('Toggl-Zugang fehlgeschlagen: ' + apiFetchErrorMessage('Toggl', e));
+      }
+    }
+
+    async function importTogglForReviewPeriod(prefix) {
+      var session = getSession();
+      var cfg = getQuantApiConfig();
+      if (!cfg.togglToken) {
+        toast('Toggl API Token fehlt');
+        return;
+      }
+      try {
+        var range = getReviewPeriodDateRange(session);
+        var endpoint = getTogglTimeEntriesEndpoint(range);
+        var res = await fetchWithTimeoutRetry(endpoint, {
+          method: 'GET',
+          headers: {
+            'Authorization': togglAuthHeader(cfg.togglToken),
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        }, 20000, 0);
+        var entries = await readJsonResponseOrThrow(res, 'Toggl');
+        if (!Array.isArray(entries)) throw new Error('Unerwartete Toggl-Antwort: erwartet wurde eine Liste von Time Entries');
+        var payload = {
+          source: 'toggl',
+          fetchedAt: new Date().toISOString(),
+          range: range,
+          endpoint: endpoint,
+          entries: entries
+        };
+        addQuantImportFromApi(session, 'toggl', 'Toggl API ' + getReviewPeriodLabel(session), range, payload);
+        if (entries.length >= 1000) toast('Toggl API importiert; Hinweis: 1000+ Einträge, bitte mögliches API-Limit prüfen');
+      } catch (e) {
+        var msg = apiFetchErrorMessage('Toggl', e);
+        toast('Toggl-Import fehlgeschlagen');
+        alert('Toggl-Import fehlgeschlagen: ' + msg);
+      }
+    }
+
+    async function habiticaGet(path, config) {
+      var endpoint = 'https://habitica.com' + path;
+      var res = await fetchWithTimeoutRetry(endpoint, {
+        method: 'GET',
+        headers: habiticaHeaders(config)
+      }, 20000, 0);
+      var json = await readJsonResponseOrThrow(res, 'Habitica');
+      return { endpoint: endpoint, response: json };
+    }
+
+    async function testHabiticaConnection(prefix) {
+      var cfg = getQuantApiConfig();
+      if (!hasHabiticaCredentials()) {
+        toast('Habitica User ID, API Token oder X-Client fehlt');
+        return;
+      }
+      try {
+        await habiticaGet('/api/v3/user', cfg);
+        toast('Habitica-Zugang OK');
+      } catch (e) {
+        alert('Habitica-Zugang fehlgeschlagen: ' + apiFetchErrorMessage('Habitica', e));
+      }
+    }
+
+    function extractHabiticaData(response, endpoint) {
+      if (!response || typeof response !== 'object') throw new Error('Leere Habitica-Antwort für ' + endpoint);
+      if (response.success === false) throw new Error('Habitica meldet Fehler für ' + endpoint + ': ' + (response.message || 'unbekannt'));
+      return response.data === undefined ? response : response.data;
+    }
+
+    async function importHabiticaForReviewPeriod(prefix) {
+      var session = getSession();
+      var cfg = getQuantApiConfig();
+      if (!hasHabiticaCredentials()) {
+        toast('Habitica User ID, API Token oder X-Client fehlt');
+        return;
+      }
+      try {
+        var range = getReviewPeriodDateRange(session);
+        var endpoints = [];
+        var userResult = await habiticaGet('/api/v3/user', cfg);
+        endpoints.push(userResult.endpoint);
+        var habitsResult = await habiticaGet('/api/v3/tasks/user?type=habits', cfg);
+        endpoints.push(habitsResult.endpoint);
+        var dailysResult = await habiticaGet('/api/v3/tasks/user?type=dailys', cfg);
+        endpoints.push(dailysResult.endpoint);
+        var todosResult = await habiticaGet('/api/v3/tasks/user?type=todos', cfg);
+        endpoints.push(todosResult.endpoint);
+        var rewards = [];
+        var rewardsRaw = null;
+        try {
+          var rewardsResult = await habiticaGet('/api/v3/tasks/user?type=rewards', cfg);
+          endpoints.push(rewardsResult.endpoint);
+          rewardsRaw = rewardsResult.response;
+          rewards = extractHabiticaData(rewardsResult.response, rewardsResult.endpoint);
+        } catch (rewardError) {
+          rewardsRaw = { error: (rewardError && rewardError.message) || String(rewardError) };
+        }
+        var tasks = {
+          habits: extractHabiticaData(habitsResult.response, habitsResult.endpoint),
+          dailys: extractHabiticaData(dailysResult.response, dailysResult.endpoint),
+          todos: extractHabiticaData(todosResult.response, todosResult.endpoint)
+        };
+        if (!Array.isArray(tasks.habits) || !Array.isArray(tasks.dailys) || !Array.isArray(tasks.todos)) {
+          throw new Error('Habitica Tasks konnten nicht als Listen gelesen werden');
+        }
+        var payload = {
+          source: 'habitica',
+          fetchedAt: new Date().toISOString(),
+          range: range,
+          endpoints: endpoints,
+          user: extractHabiticaData(userResult.response, userResult.endpoint),
+          tasks: tasks,
+          rewards: Array.isArray(rewards) ? rewards : [],
+          rawResponses: {
+            user: userResult.response,
+            habits: habitsResult.response,
+            dailys: dailysResult.response,
+            todos: todosResult.response,
+            rewards: rewardsRaw
+          }
+        };
+        if (rewardsRaw && rewardsRaw.error) payload.errors = [{ endpoint: '/api/v3/tasks/user?type=rewards', message: rewardsRaw.error }];
+        addQuantImportFromApi(session, 'habitica', 'Habitica API ' + getReviewPeriodLabel(session), range, payload);
+      } catch (e) {
+        var msg = apiFetchErrorMessage('Habitica', e);
+        toast('Habitica-Import fehlgeschlagen');
+        alert('Habitica-Import fehlgeschlagen: ' + msg);
+      }
+    }
+
     function formatBytes(size) {
       var n = Number(size) || 0;
       if (n < 1024) return n + ' B';
@@ -1156,6 +1441,11 @@
       var sourceId = 'quantImportSource-' + prefix;
       var labelId = 'quantImportLabel-' + prefix;
       var fileId = 'quantImportFile-' + prefix;
+      var cfg = getQuantApiConfig();
+      var togglTokenId = 'quantApiTogglToken-' + prefix;
+      var habiticaUserId = 'quantApiHabiticaUserId-' + prefix;
+      var habiticaTokenId = 'quantApiHabiticaToken-' + prefix;
+      var habiticaClientId = 'quantApiHabiticaClient-' + prefix;
       var cards = imports.length ? imports.map(function (imp) {
         var title = getQuantImportSourceLabel(imp.source) + ' — ' + (imp.label || imp.fileName || 'Ohne Label');
         var importedAt = imp.importedAt ? new Date(imp.importedAt).toLocaleString('de-DE') : '—';
@@ -1176,24 +1466,57 @@
           '<div class="btn-row" style="margin-top:10px"><button class="btn btn-d" onclick="removeQuantImport(\'' + jsString(imp.id) + '\')">Entfernen</button></div>' +
         '</div>';
       }).join('') : '<div class="small">Noch keine strukturierten Quant-Dateien importiert.</div>';
-      return '<div class="notice info">Dateien werden lokal als vollständige Rohdaten in dieser Session gespeichert. JSON wird zusätzlich parsebar abgelegt; CSV/TXT bleiben vollständig als Rohtext erhalten.</div>' +
-        '<label for="' + sourceId + '">Quelle wählen</label>' +
-        '<select id="' + sourceId + '">' +
-          '<option value="toggl">Toggl</option>' +
-          '<option value="habitica">Habitica</option>' +
-          '<option value="bank">Konto / Bank</option>' +
-          '<option value="sport">Sport</option>' +
-          '<option value="nutrition">Ernährung</option>' +
-          '<option value="sleep">Schlaf</option>' +
-          '<option value="other">Sonstiges</option>' +
-        '</select>' +
-        '<label for="' + labelId + '">Optionales Label</label>' +
-        '<input id="' + labelId + '" placeholder="z. B. Toggl KW 19, Kontodaten Mai, Habitica Export" />' +
-        '<label for="' + fileId + '">Datei wählen</label>' +
-        '<input id="' + fileId + '" type="file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" />' +
-        '<div class="btn-row" style="margin-top:12px">' +
-          '<button class="btn btn-v" onclick="importQuantFile(\'' + jsString(prefix) + '\')">Quant-Datei importieren</button>' +
-          (imports.length ? '<button class="btn btn-d" onclick="clearQuantImports()">Alle Quant-Imports entfernen</button>' : '') +
+      return '<div class="notice info">Dateien und API-Abrufe werden lokal als vollständige Rohdaten in dieser Session gespeichert. JSON wird zusätzlich parsebar abgelegt; CSV/TXT bleiben vollständig als Rohtext erhalten.</div>' +
+        '<div class="quant-import-card">' +
+          '<div class="qh">Direkter API-Import</div>' +
+          '<div class="notice info">Credentials werden nur lokal im Browser gespeichert und nicht exportiert oder synchronisiert.</div>' +
+          '<div class="notice">API-Tokens werden nur lokal im Browser gespeichert. Die abgerufenen Daten selbst werden als Quant-Import in dieser Session gespeichert und können in Export, Prompt und Gist-Sync einfließen.</div>' +
+          '<div class="grid-2" style="margin-top:10px">' +
+            '<div>' +
+              '<div class="qh" style="font-size:14px">Toggl</div>' +
+              '<label for="' + togglTokenId + '">Toggl API Token</label>' +
+              '<input id="' + togglTokenId + '" type="password" value="' + esc(cfg.togglToken) + '" onchange="patchQuantApiCredential(QUANT_TOGGL_TOKEN_KEY, this.value)" placeholder="Toggl API Token" />' +
+              '<div class="btn-row" style="margin-top:10px">' +
+                '<button class="btn btn-s" onclick="testTogglConnection(\'' + jsString(prefix) + '\')">Toggl-Zugang testen</button>' +
+                '<button class="btn btn-v" onclick="importTogglForReviewPeriod(\'' + jsString(prefix) + '\')">Toggl für Review-Zeitraum importieren</button>' +
+              '</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="qh" style="font-size:14px">Habitica</div>' +
+              '<label for="' + habiticaUserId + '">Habitica User ID</label>' +
+              '<input id="' + habiticaUserId + '" value="' + esc(cfg.habiticaUserId) + '" onchange="patchQuantApiCredential(QUANT_HABITICA_USER_ID_KEY, this.value)" placeholder="Habitica User ID" />' +
+              '<label for="' + habiticaTokenId + '">Habitica API Token</label>' +
+              '<input id="' + habiticaTokenId + '" type="password" value="' + esc(cfg.habiticaApiToken) + '" onchange="patchQuantApiCredential(QUANT_HABITICA_API_TOKEN_KEY, this.value)" placeholder="Habitica API Token" />' +
+              '<label for="' + habiticaClientId + '">X-Client / Client Name</label>' +
+              '<input id="' + habiticaClientId + '" value="' + esc(cfg.habiticaClient) + '" onchange="patchQuantApiCredential(QUANT_HABITICA_CLIENT_KEY, this.value)" placeholder="z. B. deine-email@example.com-weekly-review" />' +
+              '<div class="btn-row" style="margin-top:10px">' +
+                '<button class="btn btn-s" onclick="testHabiticaConnection(\'' + jsString(prefix) + '\')">Habitica-Zugang testen</button>' +
+                '<button class="btn btn-v" onclick="importHabiticaForReviewPeriod(\'' + jsString(prefix) + '\')">Habitica für Review-Zeitraum importieren</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="btn-row" style="margin-top:12px"><button class="btn btn-d" onclick="clearQuantApiCredentials(\'all\')">API-Credentials löschen</button></div>' +
+        '</div>' +
+        '<div class="quant-import-card">' +
+          '<div class="qh">Datei-Import</div>' +
+          '<label for="' + sourceId + '">Quelle wählen</label>' +
+          '<select id="' + sourceId + '">' +
+            '<option value="toggl">Toggl</option>' +
+            '<option value="habitica">Habitica</option>' +
+            '<option value="bank">Konto / Bank</option>' +
+            '<option value="sport">Sport</option>' +
+            '<option value="nutrition">Ernährung</option>' +
+            '<option value="sleep">Schlaf</option>' +
+            '<option value="other">Sonstiges</option>' +
+          '</select>' +
+          '<label for="' + labelId + '">Optionales Label</label>' +
+          '<input id="' + labelId + '" placeholder="z. B. Toggl KW 19, Kontodaten Mai, Habitica Export" />' +
+          '<label for="' + fileId + '">Datei wählen</label>' +
+          '<input id="' + fileId + '" type="file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" />' +
+          '<div class="btn-row" style="margin-top:12px">' +
+            '<button class="btn btn-v" onclick="importQuantFile(\'' + jsString(prefix) + '\')">Quant-Datei importieren</button>' +
+            (imports.length ? '<button class="btn btn-d" onclick="clearQuantImports()">Alle Quant-Imports entfernen</button>' : '') +
+          '</div>' +
         '</div>' +
         '<div class="quant-import-list">' + cards + '</div>';
     }
