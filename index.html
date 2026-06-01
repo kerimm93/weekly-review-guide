@@ -200,6 +200,7 @@
 
     .notice.info { background: rgba(52,152,219,.08); border-left-color: var(--blue); }
     .notice.success { background: rgba(46,204,113,.08); border-left-color: var(--green); }
+    .notice.warn { background: rgba(255,179,71,.12); border-left-color: var(--gold); color: var(--ink); }
 
     .btn-row {
       display: flex;
@@ -473,17 +474,27 @@
       margin-bottom: 6px;
     }
 
-    .badge-readonly {
+    .badge-readonly,
+    .badge-advanced {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       padding: 5px 10px;
       border-radius: 999px;
-      border: 1px solid var(--blue);
       color: var(--ink);
-      background: rgba(52,152,219,.12);
       font-size: 12px;
       font-weight: 800;
+    }
+
+    .badge-readonly {
+      border: 1px solid var(--blue);
+      background: rgba(52,152,219,.12);
+    }
+
+    .badge-advanced {
+      border: 1px solid var(--gold);
+      background: rgba(255,179,71,.12);
+      color: var(--gold-light);
     }
 
     code {
@@ -573,7 +584,7 @@
         </div>
         <div class="meta-card">
           <div class="meta-k">Fortschritt</div>
-          <div class="meta-v" id="metaProgress">0 / 7</div>
+          <div class="meta-v" id="metaProgress">0 / 5</div>
         </div>
         <div class="meta-card">
           <div class="meta-k">Review-Datum</div>
@@ -617,9 +628,10 @@
 
     var TABS = [
       { id: 'dashboard', label: 'Review Flow' },
-      { id: 'prompts', label: 'Prompts (optional)' },
-      { id: 'data', label: 'Material & Review' },
-      { id: 'export', label: 'Export' }
+      { id: 'steps', label: 'Legacy-Schritte' },
+      { id: 'prompts', label: 'Prompt-Studio (Advanced)' },
+      { id: 'data', label: 'Material & Review (Detail)' },
+      { id: 'export', label: 'Export/Gist (Advanced)' }
     ];
 
     var DEFAULT_STEPS = [
@@ -1546,7 +1558,7 @@
           '<div class="grid-2" style="margin-top:10px">' +
             '<div>' +
               '<div class="qh" style="font-size:14px">Toggl</div>' +
-              '<div class="small" style="margin-bottom:8px">Falls der Browserimport blockiert wird, nutze den Quant-Dateiimport mit einem lokalen Toggl-Export.</div>' +
+              '<div class="small" style="margin-bottom:8px">Toggl-Browserimport kann durch CORS- oder Browser-Regeln blockiert werden. Stabiler Fallback: Quant-Dateiimport mit einem lokalen Toggl-Export.</div>' +
               '<label for="' + togglTokenId + '">Toggl API Token</label>' +
               '<input id="' + togglTokenId + '" type="password" value="' + esc(cfg.togglToken) + '" onchange="patchQuantApiCredential(QUANT_TOGGL_TOKEN_KEY, this.value)" placeholder="Toggl API Token" />' +
               '<div class="btn-row" style="margin-top:10px">' +
@@ -1556,6 +1568,7 @@
             '</div>' +
             '<div>' +
               '<div class="qh" style="font-size:14px">Habitica</div>' +
+              '<div class="small" style="margin-bottom:8px">Habitica liefert Rohdaten und Teilstatus für Review-Zwecke, keine fertige Interpretation.</div>' +
               '<label for="' + habiticaUserId + '">Habitica User ID</label>' +
               '<input id="' + habiticaUserId + '" value="' + esc(cfg.habiticaUserId) + '" onchange="patchQuantApiCredential(QUANT_HABITICA_USER_ID_KEY, this.value)" placeholder="Habitica User ID" />' +
               '<label for="' + habiticaTokenId + '">Habitica API Token</label>' +
@@ -2081,7 +2094,7 @@
           <div>
             <div class="qs">
               <div class="qh">Review-Session</div>
-              <div class="notice">Neuer linearer Weekly-Review-Flow: Material laden → Zeitraum festlegen → Quant-Daten → Anmerkungen → Review generieren.</div>
+              <div class="notice">Der Primärworkflow ist: Material laden → Zeitraum festlegen → Quant-Daten → Anmerkungen → Review generieren.</div>
               <label>Wochenlabel</label>
               <input value="${esc(session.weekLabel)}" onchange="patchSession('weekLabel', this.value)" placeholder="z. B. KW 14 – 2026" />
               <label>Review-Datum</label>
@@ -2129,7 +2142,7 @@
     }
 
     function stepsHTML(session) {
-      return '<div class="notice info">Dieser Bereich ist optional. Wenn du strukturierte Zwischenstände brauchst, kannst du hier Hilfsschritte abhaken und bei Bedarf Prompttexte erzeugen.</div>' +
+      return '<div class="notice warn"><span class="badge-advanced">Legacy</span><br>Legacy-Schritte sind optional und nicht Teil des primären linearen Review-Flows. Wenn du strukturierte Zwischenstände brauchst, kannst du hier Hilfsschritte abhaken und bei Bedarf Prompttexte erzeugen.</div>' +
         '<div class="step-list">' +
         DEFAULT_STEPS.map(function (def) {
           var st = session.steps.find(function (s) { return s.id === def.id; }) || { done: false, notes: '', artifacts: '', promptNotes: '' };
@@ -2189,7 +2202,7 @@
     }
 
     function promptsHTML(session) {
-      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Hilfen (optional)</div>\n              <div class="notice">Hier erzeugst du bei Bedarf wiederverwendbare Prompttexte für Material-, Scope- und Review-Arbeit. Der Workflow funktioniert auch ohne diesen Bereich.</div>\n              <div class="btn-row">' + promptButtonsHTML() + '</div>\n              <label>Letzte Review-Zusammenfassung / Ergebnis</label>\n              <textarea onchange="patchSession(\'reviewResult\', this.value)" placeholder="Hier kannst du das Ergebnis der Weekly Review oder eine Zwischenfassung parken.">' + esc(session.reviewResult) + '</textarea>\n              <label>Nächste-Woche-Vorschau / Planung</label>\n              <textarea class="compact" onchange="patchSession(\'nextWeekPreview\', this.value)" placeholder="Deadlines, Fokus, erste Planungspunkte">' + esc(session.nextWeekPreview) + '</textarea>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Ausgabe</div>\n              <div class="prompt-output" id="promptOutput">Wähle links einen Prompt aus oder nutze optional die Copy-Buttons aus der Schrittliste.</div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="copyPromptOutput()">Ausgabe kopieren</button>\n                <button class="btn btn-v" onclick="buildPrompt(\'startWeeklyReview\', true)">Review-Start sofort kopieren</button>\n              </div>\n            </div>\n          </div>\n        </div>\n      ';
+      return '\n        <div class="grid-2">\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Hilfen <span class="badge-advanced">Advanced</span></div>\n              <div class="notice warn">Prompt-Studio ist optional/advanced. Hier erzeugst du bei Bedarf wiederverwendbare Prompttexte für Material-, Scope- und Review-Arbeit; der primäre Workflow funktioniert auch ohne diesen Bereich.</div>\n              <div class="btn-row">' + promptButtonsHTML() + '</div>\n              <label>Letzte Review-Zusammenfassung / Ergebnis</label>\n              <textarea onchange="patchSession(\'reviewResult\', this.value)" placeholder="Hier kannst du das Ergebnis der Weekly Review oder eine Zwischenfassung parken.">' + esc(session.reviewResult) + '</textarea>\n              <label>Nächste-Woche-Vorschau / Planung</label>\n              <textarea class="compact" onchange="patchSession(\'nextWeekPreview\', this.value)" placeholder="Deadlines, Fokus, erste Planungspunkte">' + esc(session.nextWeekPreview) + '</textarea>\n            </div>\n          </div>\n\n          <div>\n            <div class="qs">\n              <div class="qh">Prompt-Ausgabe</div>\n              <div class="prompt-output" id="promptOutput">Wähle links einen Prompt aus oder nutze optional die Copy-Buttons aus der Schrittliste.</div>\n              <div class="btn-row" style="margin-top:12px">\n                <button class="btn btn-q" onclick="copyPromptOutput()">Ausgabe kopieren</button>\n                <button class="btn btn-v" onclick="buildPrompt(\'startWeeklyReview\', true)">Review-Start sofort kopieren</button>\n              </div>\n            </div>\n          </div>\n        </div>\n      ';
     }
 
     function dataHTML(session) {
@@ -2201,10 +2214,11 @@
       var quantImportsHtml = renderQuantImportsHTML(session, 'data');
 
       return `
+        <div class="notice warn"><span class="badge-advanced">Detail / Advanced</span><br>Material & Review ist eine Detailansicht für Prüfung und Nachjustierung des primären Review-Flows.</div>
         <div class="grid-2">
           <div>
             <div class="qs">
-              <div class="qh">Material: Externe Daily-Log-Quelle <span class="badge-readonly">Read-only</span></div>
+              <div class="qh">Material: Externe Daily-Log-Quelle <span class="badge-readonly">Read-only</span> <span class="badge-advanced">Detail</span></div>
               ${dailyLogSourceHtml}
             </div>
 
@@ -2267,10 +2281,11 @@
     function exportHTML(session) {
       var cfg = getGistConfig();
       return `
+        <div class="notice warn"><span class="badge-advanced">Advanced / Sicherung</span><br>Export/Gist ist ein Advanced- und Sicherungsbereich. Der primäre lineare Review-Flow bleibt davon unabhängig.</div>
         <div class="grid-2">
           <div>
             <div class="qs">
-              <div class="qh">GitHub Gist Sync</div>
+              <div class="qh">GitHub Gist Sync <span class="badge-advanced">Advanced</span></div>
               <div class="notice info">Basiert auf deinem Projektstandard: Token und Gist-ID werden separat in localStorage gespeichert, nie im JSON-Export. Cloud-Datei: <strong>${esc(GIST_FILE)}</strong>.</div>
               <label>GitHub Token</label>
               <input type="password" value="${esc(cfg.token)}" onchange="setGistToken(this.value)" placeholder="ghp_... oder feingranulares Token mit Gists-Zugriff" />
