@@ -2028,19 +2028,22 @@
 
 
     function reviewFlowHTML(session) {
-      var dailyLogSourceHtml = renderDailyLogSourceHTML(session);
+      var dailyLogSourceHtml = renderDailyLogSourceHTML(session, 'flow');
       var selectionHtml = renderDailyLogSelectionHTML(session);
+      var previewHtml = renderDailyLogMaterialSummaryHTML(session);
       var reviewPeriodHtml = renderReviewPeriodHTML(session);
       var quantImportsHtml = renderQuantImportsHTML(session, 'flow');
       return `
         <div class="review-flow">
           <div class="flow-section">
-            <div class="flow-title">1) Material laden</div>
-            <div class="flow-help">Importiere die Read-only Daily-Log-Quelle und übernimm den gewünschten Ausschnitt für diese Session.</div>
+            <div class="flow-title">1) Normale Review-Materialpipeline</div>
+            <div class="flow-help">Daily-Log-ZIP oder Read-only-Gist laden, Zeitraum auswählen und direkt auf diese Session anwenden.</div>
             <div class="notice info" style="margin-bottom:10px">Externe Daily-Log-Daten werden nur gelesen. Diese App schreibt nicht zurück.</div>
             ${dailyLogSourceHtml}
             <div style="height:10px"></div>
             ${selectionHtml}
+            <div style="height:10px"></div>
+            ${previewHtml}
           </div>
 
           <div class="flow-section">
@@ -2206,7 +2209,7 @@
     }
 
     function dataHTML(session) {
-      var dailyLogSourceHtml = renderDailyLogSourceHTML(session);
+      var dailyLogSourceHtml = renderDailyLogSourceHTML(session, 'data');
       var selectionHtml = renderDailyLogSelectionHTML(session);
       var reviewPeriodHtml = renderReviewPeriodHTML(session);
       var previewHtml = renderDailyLogPreviewHTML(session);
@@ -2214,7 +2217,7 @@
       var quantImportsHtml = renderQuantImportsHTML(session, 'data');
 
       return `
-        <div class="notice warn"><span class="badge-advanced">Detail / Advanced</span><br>Material & Review ist eine Detailansicht für Prüfung und Nachjustierung des primären Review-Flows.</div>
+        <div class="notice warn"><span class="badge-advanced">Detail / Advanced / Debug</span><br>Diese Ansicht dient zur Prüfung, Nachjustierung und Debug-Vorschau. Der normale Ablauf läuft vollständig im Review Flow.</div>
         <div class="grid-2">
           <div>
             <div class="qs">
@@ -2846,8 +2849,8 @@
       }
     }
 
-    function getDailyLogZipFileInput() {
-      return document.getElementById('dailyLogZipInput');
+    function getDailyLogZipFileInput(inputId) {
+      return document.getElementById(inputId || 'dailyLogZipInput-flow');
     }
 
     function pickDailyLogDateFromPath(path) {
@@ -2899,8 +2902,8 @@
       };
     }
 
-    async function loadDailyLogFromZip() {
-      var input = getDailyLogZipFileInput();
+    async function loadDailyLogFromZip(inputId) {
+      var input = getDailyLogZipFileInput(inputId);
       var file = input && input.files && input.files[0] ? input.files[0] : null;
       if (!file) {
         toast('Bitte zuerst eine ZIP-Datei wählen');
@@ -3196,9 +3199,10 @@
       toast('Gewählte Daily-Log-Woche in die Session übernommen');
     }
 
-    function renderDailyLogSourceHTML(session) {
+    function renderDailyLogSourceHTML(session, idPrefix) {
       var cfg = getDailyLogReadConfig();
       var cache = S.dailyLogReadCache || { days: [], weeks: [] };
+      var zipInputId = 'dailyLogZipInput-' + (idPrefix || 'default');
       return `
         <div class="notice info">Diese Anbindung bleibt strikt read-only. Du kannst Daily-Log-Daten entweder per <code>GET</code> aus einem separaten Gist laden oder lokal ein ZIP importieren. Es gibt keinen Schreibzugriff auf externe Quellen.</div>
         <label>Daily-Log-Gist-ID</label>
@@ -3211,9 +3215,9 @@
           <button class="btn btn-m" onclick="clearDailyLogReadConfig()">Read-only-Konfig löschen</button>
         </div>
         <label style="margin-top:16px">Daily-Log-ZIP (Export)</label>
-        <input id="dailyLogZipInput" type="file" accept=".zip,application/zip" />
+        <input id="${esc(zipInputId)}" type="file" accept=".zip,application/zip" />
         <div class="btn-row" style="margin-top:12px">
-          <button class="btn btn-t" onclick="loadDailyLogFromZip()">ZIP einlesen</button>
+          <button class="btn btn-t" onclick="loadDailyLogFromZip('${esc(zipInputId)}')">ZIP einlesen</button>
         </div>
         <div class="small" style="margin-top:12px">Quelle: <strong>${esc(session.dailyLogReadMeta.sourceKind || cache.sourceKind || 'external_read_only_gist')}</strong></div>
         <div class="kv" style="margin-top:12px"><div class="k">Geladen am</div><div>${esc(cache.loadedAt ? new Date(cache.loadedAt).toLocaleString('de-DE') : '—')}</div></div>
@@ -3250,7 +3254,21 @@
         `}
         <div class="small" style="margin-top:12px">Aktuelle Auswahl: <strong>${esc(getSelectedDailyLogLabel(session))}</strong></div>
         <div class="btn-row" style="margin-top:12px">
-          <button class="btn btn-v" onclick="applySelectedDailyLogWeekToSession()">Auswahl in Session-Felder übernehmen</button>
+          <button class="btn btn-v" onclick="applySelectedDailyLogWeekToSession()">Auswahl auf diese Session anwenden</button>
+        </div>
+      `;
+    }
+
+    function renderDailyLogMaterialSummaryHTML(session) {
+      var days = getSelectedDailyLogDays(session);
+      var rawCardCount = days.reduce(function (sum, day) { return sum + asArray(day.rawCards).length; }, 0);
+      var objectCount = days.reduce(function (sum, day) { return sum + asArray(day.objects).length; }, 0);
+      var feedCount = days.reduce(function (sum, day) { return sum + asArray(day.feedItems).length; }, 0);
+      var meta = session.dailyLogReadMeta || {};
+      return `
+        <div class="notice">
+          <strong>Materialvorschau:</strong> ${days.length} Tage, ${rawCardCount} Rohkarten, ${objectCount} Objekte, ${feedCount} FeedItems · Zeitraum ${esc(getSelectedDailyLogLabel(session))}
+          <div class="small" style="margin-top:6px">Quelle/Datei: ${esc(meta.sourceKind || S.dailyLogReadCache.sourceKind || '—')} · ${esc(meta.sourceFile || S.dailyLogReadCache.fileName || '—')} · Zuletzt angewendet: ${esc(meta.lastAppliedAt ? new Date(meta.lastAppliedAt).toLocaleString('de-DE') : 'noch nicht')}</div>
         </div>
       `;
     }
@@ -3473,6 +3491,81 @@
       lines.push('Nicht sicher genug ableitbar:');
       if (overview.uncertain.length) overview.uncertain.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · Ziel: ' + (item.targetLabel || item.targetHorizon || 'unbekannt')); });
       else lines.push('- Keine unklaren Horizonte');
+      return lines.join('\n');
+    }
+
+    function truncatePromptText(text, maxLen) {
+      var normalized = String(text || '').replace(/\s+/g, ' ').trim();
+      var limit = maxLen || 400;
+      return normalized.length > limit ? normalized.slice(0, limit - 1).trimEnd() + '…' : normalized;
+    }
+
+    function formatDailyLogRawCardForPrompt(card) {
+      var meta = [card && card.time, card && card.type].filter(Boolean).join(' / ');
+      return '[' + (meta || 'ohne Zeit / Typ') + '] ' + truncatePromptText(card && card.text, 400);
+    }
+
+    function formatDailyLogObjectForPrompt(obj) {
+      var details = [obj && obj.status, obj && obj.context].filter(Boolean).map(function (value) {
+        return truncatePromptText(value, 160);
+      });
+      return truncatePromptText(obj && obj.text, 400) + (details.length ? ' [' + details.join(' · ') + ']' : '');
+    }
+
+    function buildDayReviewContextPromptBlock(day) {
+      var lines = ['TAG ' + (day.date || 'Ohne Datum')];
+      var rawCards = asArray(day.rawCards);
+      var rawLimit = 12;
+      lines.push('- Rohkarten:');
+      if (rawCards.length) rawCards.slice(0, rawLimit).forEach(function (card) { lines.push('  - ' + formatDailyLogRawCardForPrompt(card)); });
+      else lines.push('  - keine');
+      if (rawCards.length > rawLimit) lines.push('  - … weitere ' + (rawCards.length - rawLimit) + ' Rohkarten nicht ausgeschrieben.');
+
+      var summary = buildObjectTypeSummary(day);
+      var groups = [
+        ['task', 'Aufgaben', summary.task.length ? summary.task : asArray(day.tasks)],
+        ['event', 'Ereignisse', summary.event.length ? summary.event : asArray(day.events)],
+        ['note', 'Notizen', summary.note],
+        ['idea', 'Ideen', summary.idea],
+        ['quote', 'Zitate', summary.quote]
+      ];
+      lines.push('- Objekte:');
+      groups.forEach(function (group) {
+        var items = group[2];
+        var objectLimit = 8;
+        lines.push('  - ' + group[1] + ':');
+        if (items.length) items.slice(0, objectLimit).forEach(function (obj) { lines.push('    - ' + formatDailyLogObjectForPrompt(obj)); });
+        else lines.push('    - keine');
+        if (items.length > objectLimit) lines.push('    - … weitere ' + (items.length - objectLimit) + ' Objekte nicht ausgeschrieben.');
+      });
+
+      var feedItems = asArray(day.feedItems);
+      lines.push('- Optionaler Kontext:');
+      if (feedItems.length) {
+        lines.push('  - FeedItems:');
+        feedItems.slice(0, 5).forEach(function (item) { lines.push('    - ' + truncatePromptText(item.text || item, 300)); });
+        if (feedItems.length > 5) lines.push('    - … weitere ' + (feedItems.length - 5) + ' FeedItems nicht ausgeschrieben.');
+      } else {
+        lines.push('  - FeedItems: keine');
+      }
+      lines.push('  - Tagesplan: ' + (truncatePromptText(toReadableText(day.plan), 500) || '—'));
+      lines.push('  - reviewDone: ' + (day.reviewDone ? 'ja' : 'nein'));
+      lines.push('  - closedAt: ' + (day.closedAt || '—'));
+      if (day.migrations.length) lines.push('  - Legacy-Migrationen: ' + truncatePromptText(day.migrations.map(function (item) { return item.text; }).filter(Boolean).join(' | '), 500));
+      return lines.join('\n');
+    }
+
+    function buildDailyLogBasisPromptText(session) {
+      var days = getReviewPeriodDays(session);
+      var lines = [
+        'DAILY-LOG-BASIS',
+        'Hinweis: Die Rohkarten liefern den konkreten Tagesverlauf und die Sprache des Tages. Die extrahierten Objekte strukturieren Aufgaben, Ereignisse, Notizen, Ideen und Zitate. Obsidian-Daily-Notes sind optionaler Zusatzkontext, nicht die primäre Pflichtquelle.'
+      ];
+      if (!days.length) {
+        lines.push('', 'Keine Daily-Log-Tage für den Review-Zeitraum ausgewählt.');
+        return lines.join('\n');
+      }
+      days.forEach(function (day) { lines.push('', buildDayReviewContextPromptBlock(day)); });
       return lines.join('\n');
     }
 
@@ -3752,8 +3845,12 @@
           '',
           'STARTE DIE WEEKLY REVIEW.',
           '',
-          'INPUT 1 – DAILY NOTES DIESER WOCHE',
-          session.dailyNotesRaw || 'Noch keine Daily Notes hinterlegt.',
+          'INPUT 1 – PRIMÄRE DAILY-LOG-BASIS',
+          buildDailyLogBasisPromptText(session),
+          '',
+          'OPTIONALER MANUELLER ZUSATZKONTEXT – DAILY NOTES / OBSIDIAN-AUSZÜGE',
+          'Falls hier manuelle Daily Notes oder Obsidian-Auszüge vorhanden sind, nutze sie als Ergänzung. Die primäre Tagesbasis sind Daily-Log-Rohkarten und Objekte.',
+          session.dailyNotesRaw || 'Kein manueller Daily-Notes-Zusatzkontext hinterlegt.',
           '',
           'INPUT 2 – EXTERNE WOCHEN-DATEN (OPTIONAL)',
           buildQuantImportsPromptText(session),
@@ -3773,8 +3870,6 @@
           '',
           'Migrierte Aufgaben:',
           session.migratedTasks || '—',
-          '',
-          buildSelectedDailyLogPromptText(session),
           '',
           buildWeeklyTaskOverviewPromptText(session),
           '',
