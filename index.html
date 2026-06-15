@@ -3265,6 +3265,7 @@
     function renderDailyLogMaterialSummaryHTML(session) {
       var days = getSelectedDailyLogDays(session);
       var appliedDays = asArray(session.dailyLogAppliedDays);
+      var promptScopeDays = filterDailyLogDaysToReviewPeriod(appliedDays, session);
       var rawCardCount = days.reduce(function (sum, day) { return sum + asArray(day.rawCards).length; }, 0);
       var objectCount = days.reduce(function (sum, day) { return sum + asArray(day.objects).length; }, 0);
       var feedCount = days.reduce(function (sum, day) { return sum + asArray(day.feedItems).length; }, 0);
@@ -3273,7 +3274,7 @@
         <div class="notice">
           <strong>Materialvorschau:</strong> ${days.length} Tage, ${rawCardCount} Rohkarten, ${objectCount} Objekte, ${feedCount} FeedItems · Zeitraum ${esc(getSelectedDailyLogLabel(session))}
           <div class="small" style="margin-top:6px">Quelle/Datei: ${esc(meta.sourceKind || S.dailyLogReadCache.sourceKind || '—')} · ${esc(meta.sourceFile || S.dailyLogReadCache.fileName || '—')} · Zuletzt angewendet: ${esc(meta.lastAppliedAt ? new Date(meta.lastAppliedAt).toLocaleString('de-DE') : 'noch nicht')}</div>
-          <div class="small" style="margin-top:6px"><strong>Session-Snapshot:</strong> ${appliedDays.length ? appliedDays.length + ' Tage angewendet' : 'Noch nicht auf Session angewendet'}</div>
+          <div class="small" style="margin-top:6px"><strong>Session-Snapshot:</strong> ${appliedDays.length ? appliedDays.length + ' Tage angewendet · Aktiver Prompt-Scope: ' + promptScopeDays.length + ' Tage' : 'Noch nicht auf Session angewendet'}</div>
         </div>
       `;
     }
@@ -3579,11 +3580,24 @@
       return lines.join('\n');
     }
 
+    function filterDailyLogDaysToReviewPeriod(days, session) {
+      var sourceDays = asArray(days);
+      var start = session && isIsoDateString(session.reviewPeriodStart) ? session.reviewPeriodStart : '';
+      var end = session && isIsoDateString(session.reviewPeriodEnd) ? session.reviewPeriodEnd : '';
+      if (!start && !end) return sourceDays;
+      return sourceDays.filter(function (day) {
+        if (!day || !isIsoDateString(day.date)) return false;
+        if (start && day.date < start) return false;
+        if (end && day.date > end) return false;
+        return true;
+      });
+    }
+
     function getSessionDailyLogAppliedDays(session) {
       var appliedDays = asArray(session && session.dailyLogAppliedDays);
-      if (appliedDays.length) return appliedDays;
+      if (appliedDays.length) return filterDailyLogDaysToReviewPeriod(appliedDays, session);
       var meta = session && session.dailyLogReadMeta;
-      return meta && meta.lastAppliedAt ? getReviewPeriodDays(session) : [];
+      return meta && meta.lastAppliedAt ? filterDailyLogDaysToReviewPeriod(getReviewPeriodDays(session), session) : [];
     }
 
     function buildDailyLogBasisPromptText(session) {
