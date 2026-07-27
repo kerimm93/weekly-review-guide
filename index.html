@@ -617,6 +617,7 @@
     var GIST_ID_KEY = 'weekly_review_orchestrator_gist_id';
     var GIST_API_ROOT = 'https://api.github.com/gists/';
     var AUTO_SYNC_DELAY = 30000;
+    var PROMPT_HISTORY_TEXT_LIMIT = 4000;
     var DAILY_LOG_READ_GIST_ID_KEY = 'weekly_review_orchestrator_dailylog_read_gist_id';
     var DAILY_LOG_READ_TOKEN_KEY = 'weekly_review_orchestrator_dailylog_read_token';
     var QUANT_TOGGL_TOKEN_KEY = 'weekly_review_quant_toggl_token';
@@ -893,6 +894,7 @@
       if (!preserveExported || !S._lastExported) S._lastExported = new Date().toISOString();
       var session = getSession();
       if (session && !preserveActiveSessionTimestamp) session.updatedAt = new Date().toISOString();
+      S.sessions.forEach(function (item) { normalizePromptHistory(item); });
       try {
         localStorage.setItem(LKEY, JSON.stringify(S));
       } catch (e) {}
@@ -1779,6 +1781,23 @@
       return parseJsonOrNull(imp.rawText);
     }
 
+    function isStructuredQuantJsonImport(imp) {
+      return imp && imp.parseKind === 'json' && getParsedQuantJson(imp) !== null;
+    }
+
+    function hasTogglPromptShape(json) {
+      return Array.isArray(json) || !!(json && typeof json === 'object' &&
+        (Array.isArray(json.entries) || Array.isArray(json.normalizedEntries)));
+    }
+
+    function hasHabiticaPromptShape(json) {
+      if (!json || typeof json !== 'object' || Array.isArray(json)) return false;
+      var tasks = json.tasks || json.data || json;
+      return !!(tasks && typeof tasks === 'object' &&
+        (Array.isArray(tasks.habits) || Array.isArray(tasks.dailys) || Array.isArray(tasks.todos) ||
+          Array.isArray(tasks.rewards) || Array.isArray(json.rewards)));
+    }
+
     function normalizeTogglEntry(entry) {
       if (!entry || typeof entry !== 'object') return null;
       var start = entry.start_local || entry.start || entry.start_utc || entry.startTime || entry.startedAt || entry.started_at || '';
@@ -1934,9 +1953,9 @@
       return lines.join('\n');
     }
 
-    function buildGenericQuantImportPromptText(imp) {
+    function buildGenericQuantImportPromptText(imp, forceRawText) {
       var kind = imp.parseKind || 'text';
-      var parsed = getParsedQuantJson(imp);
+      var parsed = forceRawText || kind === 'text' || kind === 'csv' ? null : getParsedQuantJson(imp);
       var lines = ['## ' + getQuantImportSourceLabel(imp.source) + ' – ' + (imp.label || imp.fileName || 'Ohne Label'), ''];
       Array.prototype.push.apply(lines, buildQuantImportPromptMetaLines(imp, getQuantImportSourceLabel(imp.source)));
       lines.push('- Format: ' + kind);
@@ -1965,24 +1984,19 @@
         return lines.join('\n');
       }
       var raw = imp.rawText || '';
-      var limit = 12000;
-      if (raw.length > limit) {
-        lines.push('```text');
-        lines.push(raw.slice(0, limit));
-        lines.push('```');
-        lines.push('[gekürzt für Prompt-Ausgabe; vollständige Rohdaten sind im Import gespeichert]');
-      } else {
-        lines.push('```text');
-        lines.push(raw || '—');
-        lines.push('```');
-      }
+      lines.push('```text');
+      lines.push(raw || '—');
+      lines.push('```');
       return lines.join('\n');
     }
 
     function buildQuantImportPromptBlock(imp) {
-      if (imp.source === 'toggl') return buildTogglImportPromptText(imp);
-      if (imp.source === 'habitica') return buildHabiticaImportPromptText(imp);
-      return buildGenericQuantImportPromptText(imp);
+      var parsed = isStructuredQuantJsonImport(imp) ? getParsedQuantJson(imp) : null;
+      if (imp.source === 'toggl' && hasTogglPromptShape(parsed)) return buildTogglImportPromptText(imp);
+      if (imp.source === 'habitica' && hasHabiticaPromptShape(parsed)) return buildHabiticaImportPromptText(imp);
+      var incompatibleSpecializedJson = imp.parseKind === 'json' && parsed !== null &&
+        (imp.source === 'toggl' || imp.source === 'habitica');
+      return buildGenericQuantImportPromptText(imp, incompatibleSpecializedJson && !!String(imp.rawText || ''));
     }
 
     function buildQuantImportsPromptText(session) {
@@ -2367,14 +2381,34 @@
     function rememberPrompt(type, prompt) {
       var session = getSession();
       if (!session) return;
-      session.promptHistory.unshift({
+      if (!Array.isArray(session.promptHistory)) session.promptHistory = [];
+      session.promptHistory.unshift(compactPromptHistoryEntry({
         id: uid(),
         type: type,
         createdAt: new Date().toISOString(),
         prompt: prompt
-      });
+      }));
       session.promptHistory = session.promptHistory.slice(0, 12);
       save();
+    }
+
+    function compactPromptHistoryEntry(entry) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+      var prompt = String(entry.prompt || '');
+      if (prompt.length <= PROMPT_HISTORY_TEXT_LIMIT) return entry;
+      var originalLength = Number(entry.originalLength) || prompt.length;
+      var marker = '\n[… Prompt-Historie gekürzt; ursprünglich ' + originalLength + ' Zeichen …]';
+      var compacted = Object.assign({}, entry, {
+        prompt: prompt.slice(0, Math.max(0, PROMPT_HISTORY_TEXT_LIMIT - marker.length)) + marker,
+        truncated: true,
+        originalLength: originalLength
+      });
+      return compacted;
+    }
+
+    function normalizePromptHistory(session) {
+      if (!session || !Array.isArray(session.promptHistory)) return;
+      session.promptHistory = session.promptHistory.slice(0, 12).map(compactPromptHistoryEntry);
     }
 
     function previewPrompt(type) {
@@ -2441,13 +2475,13 @@
 
     function classifyObjectType(typeValue) {
       var type = normalizeObjectTypeValue(typeValue);
-      if (!type) return '';
+      if (!type) return 'unknown';
       if (OBJECT_TYPE_GROUPS.task.indexOf(type) !== -1) return 'task';
       if (OBJECT_TYPE_GROUPS.event.indexOf(type) !== -1) return 'event';
       if (OBJECT_TYPE_GROUPS.note.indexOf(type) !== -1) return 'note';
       if (OBJECT_TYPE_GROUPS.idea.indexOf(type) !== -1) return 'idea';
       if (OBJECT_TYPE_GROUPS.quote.indexOf(type) !== -1) return 'quote';
-      return '';
+      return 'unknown';
     }
 
     function buildObjectTypeSummary(day) {
@@ -2456,11 +2490,12 @@
         event: [],
         note: [],
         idea: [],
-        quote: []
+        quote: [],
+        unknown: []
       };
       asArray(day && day.objects).forEach(function (obj) {
         var bucket = classifyObjectType(readObjectType(obj));
-        if (bucket) summary[bucket].push(obj);
+        summary[bucket].push(obj);
       });
       return summary;
     }
@@ -2551,6 +2586,11 @@
       return d.toISOString().slice(0, 10);
     }
 
+    function readImportedDayDate(day) {
+      if (!day || typeof day !== 'object') return '';
+      return coerceDateOnly(firstNonEmpty(day.date, day.dayDate, day.isoDate, day.day, day.createdAt, day.updatedAt));
+    }
+
     function normalizeHorizon(value) {
       var v = String(value || '').trim().toLowerCase();
       if (!v) return '';
@@ -2588,7 +2628,7 @@
 
     function normalizeMigrationItem(item, fallbackDate) {
       var base = normalizeLooseItem(item);
-      return {
+      return Object.assign({}, base, {
         text: base.text,
         date: coerceDateOnly(firstNonEmpty(base.date, fallbackDate)),
         direction: firstNonEmpty(base.direction, base.flow, base.move, ''),
@@ -2596,7 +2636,7 @@
         targetHorizon: normalizeHorizon(firstNonEmpty(base.targetHorizon, base.horizon, base.target, base.destination, base.to, '')),
         targetLabel: firstNonEmpty(base.targetLabel, base.destinationLabel, base.target, base.destination, ''),
         id: firstNonEmpty(base.id, base.taskId, '')
-      };
+      });
     }
 
     function collectQuantText(day) {
@@ -2621,12 +2661,9 @@
     }
 
     function normalizeImportedDay(day) {
-      var date = coerceDateOnly(firstNonEmpty(day.date, day.dayDate, day.isoDate, day.day, day.createdAt, day.updatedAt));
+      var date = readImportedDayDate(day);
       var tasks = asArray(firstNonEmptyArray(day.tasks, day.openTasks, day.dailyTasks, day.todos, [])).map(normalizeTaskItem).filter(function (item) { return item.text; });
       var events = asArray(firstNonEmptyArray(day.events, day.logEvents, day.eventItems, [])).map(normalizeEventItem).filter(function (item) { return item.text; });
-      var migrations = asArray(firstNonEmptyArray(day.migrations, day.taskMigrations, day.movedTasks, day.migrationLog, [])).map(function (item) {
-        return normalizeMigrationItem(item, date);
-      }).filter(function (item) { return item.text || item.targetHorizon; });
       var rawCards = asArray(firstNonEmptyArray(day.rawCards, day.cards, [])).map(function (card) {
         var base = normalizeLooseItem(card);
         return {
@@ -2639,7 +2676,7 @@
       }).filter(function (item) { return item.text || item.type || item.time; });
       var objects = asArray(firstNonEmptyArray(day.objects, day.extractedObjects, [])).map(function (obj) {
         var base = normalizeLooseItem(obj);
-        return {
+        return Object.assign({}, base, {
           id: firstNonEmpty(base.id, base.objectId, ''),
           type: firstNonEmpty(base.typ, base.type, ''),
           text: firstNonEmpty(base.text, base.sourceQuote, ''),
@@ -2648,8 +2685,18 @@
           horizon: normalizeHorizon(firstNonEmpty(base.horizon, base.targetHorizon, base.destination, base.to, '')),
           cardId: firstNonEmpty(base.cardId, base.sourceCardId, ''),
           context: firstNonEmpty(base.kontext, base.context, '')
-        };
+        });
       }).filter(function (item) { return item.text || item.type; });
+      var migrations = asArray(firstNonEmptyArray(day.migrations, day.taskMigrations, day.movedTasks, day.migrationLog, [])).map(function (item) {
+        var normalized = normalizeMigrationItem(item, date);
+        if (!normalized.text && normalized.objectId) {
+          var referenced = objects.find(function (obj) { return String(obj.id || '') === String(normalized.objectId); });
+          if (referenced) normalized.text = referenced.text || '';
+        }
+        return normalized;
+      }).filter(function (item) {
+        return item.text || item.targetHorizon || item.objectId || item.migratedTo || item.migratedAt;
+      });
       var feedItems = asArray(firstNonEmptyArray(day.feedItems, day.feed, [])).map(function (item) {
         var base = normalizeLooseItem(item);
         return {
@@ -2686,6 +2733,15 @@
 
     function extractDayArray(payload) {
       if (!payload) return [];
+      if (payload.S && Array.isArray(payload.S.days) && looksLikeDayObject(payload.TODAY)) {
+        var splitDays = payload.S.days.slice();
+        var todayDate = readImportedDayDate(payload.TODAY);
+        var hasTodayDate = todayDate && splitDays.some(function (day) {
+          return readImportedDayDate(day) === todayDate;
+        });
+        if (!hasTodayDate) splitDays.push(payload.TODAY);
+        return splitDays;
+      }
       var directCandidates = [
         payload.days,
         payload.dailyLogs,
@@ -2756,7 +2812,7 @@
       var out = { weeklyLog: [], futureLog: [], uncertain: [] };
       (days || []).forEach(function (day) {
         (day.migrations || []).forEach(function (mig) {
-          var item = {
+          var item = Object.assign({}, mig, {
             date: mig.date || day.date || '',
             text: mig.text || '',
             direction: mig.direction || '',
@@ -2764,8 +2820,7 @@
             targetHorizon: mig.targetHorizon || '',
             targetLabel: mig.targetLabel || '',
             id: mig.id || ''
-          };
-          if (!item.text) return;
+          });
           if (item.targetHorizon === 'weekly_log') out.weeklyLog.push(item);
           else if (item.targetHorizon === 'future_log') out.futureLog.push(item);
           else out.uncertain.push(item);
@@ -3123,7 +3178,7 @@
         if (day.migrations.length) {
           block.push('## Migrationen');
           day.migrations.forEach(function (item) {
-            block.push('- ' + (item.text || '—') + ' | Richtung: ' + (item.direction || '—') + ' | Zielhorizont: ' + (item.targetHorizon || '—') + ' | Ziel: ' + (item.targetLabel || '—'));
+            block.push('- ' + (item.text || '—') + ' | Richtung: ' + (item.direction || '—') + ' | Zielhorizont: ' + (item.targetHorizon || '—') + ' | Ziel: ' + (item.targetLabel || item.migratedTo || '—'));
           });
         }
         if (day.notes) {
@@ -3164,7 +3219,7 @@
       if (overview.uncertain.length) {
         lines.push('');
         lines.push('Unklare Zielhorizonte');
-        overview.uncertain.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · ' + (item.targetLabel || item.targetHorizon || 'unbekannt')); });
+        overview.uncertain.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · ' + (item.targetLabel || item.targetHorizon || item.migratedTo || 'unbekannt')); });
       }
       return lines.join('\n');
     }
@@ -3384,7 +3439,8 @@
       if (!item || typeof item !== 'object') return false;
       if (item.done === true) return true;
       var status = String(item.status || '').toLowerCase();
-      return status.indexOf('done') !== -1 ||
+      return status === 'x' ||
+        status.indexOf('done') !== -1 ||
         status.indexOf('completed') !== -1 ||
         status.indexOf('complete') !== -1 ||
         status.indexOf('closed') !== -1 ||
@@ -3443,7 +3499,7 @@
             <div class="small" style="margin-top:6px"><strong>Markante Rohsignale:</strong> ${esc(compactRawCardSignals(day, 3).join(' | ') || '—')}</div>
             <div class="small" style="margin-top:6px"><strong>Signale:</strong> Cards ${day.rawCards.length} · Objects ${day.objects.length} · Feed ${day.feedItems.length}</div>
             <div class="small" style="margin-top:6px"><strong>Offene Aufgaben:</strong> ${openTasks.length ? esc(compactList(openTasks, 3).join(' | ')) : 'keine klar offenen Marker'}</div>
-            <div class="small" style="margin-top:6px"><strong>Migrationen:</strong> ${day.migrations.length ? esc(day.migrations.map(function (m) { return (m.text || '—') + ' → ' + (m.targetLabel || m.targetHorizon || '—'); }).slice(0, 3).join(' | ')) : '—'}</div>
+            <div class="small" style="margin-top:6px"><strong>Migrationen:</strong> ${day.migrations.length ? esc(day.migrations.map(function (m) { return (m.text || '—') + ' → ' + (m.targetLabel || m.targetHorizon || m.migratedTo || '—'); }).slice(0, 3).join(' | ')) : '—'}</div>
           </div>
         `;
       }).join('');
@@ -3460,7 +3516,7 @@
               '<td>' + esc(item.date || '—') + '</td>' +
               '<td>' + esc(item.text || '—') + '</td>' +
               '<td>' + esc(item.direction || '—') + '</td>' +
-              '<td>' + esc(item.targetLabel || item.targetHorizon || '—') + '</td>' +
+              '<td>' + esc(item.targetLabel || item.targetHorizon || item.migratedTo || '—') + '</td>' +
             '</tr>';
           }).join('')}
         </table>
@@ -3497,7 +3553,7 @@
       else lines.push('- Keine robust ableitbaren Einträge');
       lines.push('');
       lines.push('Nicht sicher genug ableitbar:');
-      if (overview.uncertain.length) overview.uncertain.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · Ziel: ' + (item.targetLabel || item.targetHorizon || 'unbekannt')); });
+      if (overview.uncertain.length) overview.uncertain.forEach(function (item) { lines.push('- ' + (item.date || '—') + ' · ' + item.text + ' · Ziel: ' + (item.targetLabel || item.targetHorizon || item.migratedTo || 'unbekannt')); });
       else lines.push('- Keine unklaren Horizonte');
       return lines.join('\n');
     }
@@ -3510,35 +3566,63 @@
 
     function formatDailyLogRawCardForPrompt(card) {
       var meta = [card && card.time, card && card.type].filter(Boolean).join(' / ');
-      return '[' + (meta || 'ohne Zeit / Typ') + '] ' + truncatePromptText(card && card.text, 400);
+      return '[' + (meta || 'ohne Zeit / Typ') + '] ' + String(card && card.text || '');
     }
 
     function formatDailyLogObjectForPrompt(obj) {
-      var details = [obj && obj.status, obj && obj.context].filter(Boolean).map(function (value) {
-        return truncatePromptText(value, 160);
-      });
-      return truncatePromptText(obj && obj.text, 400) + (details.length ? ' [' + details.join(' · ') + ']' : '');
+      var details = [];
+      if (!obj || typeof obj !== 'object') return String(obj || '');
+      var handled = { text: true, type: true, typ: true, status: true, state: true, done: true, horizon: true, targetHorizon: true, context: true, kontext: true };
+      function add(label, value) {
+        if (value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length)) return;
+        if (Array.isArray(value)) details.push(label + ': ' + value.map(function (item) { return typeof item === 'object' ? JSON.stringify(item) : String(item); }).join(', '));
+        else if (typeof value === 'object') Object.keys(value).sort().forEach(function (key) { add(label + '.' + key, value[key]); });
+        else details.push(label + ': ' + String(value));
+      }
+      add('ID', obj.id);
+      add('Karten-ID', obj.cardId);
+      add('Parent-ID', obj.parentId);
+      add('Uhrzeit', firstNonEmpty(obj.zeit, obj.time, ''));
+      if (obj.type) details.push('Typ: ' + obj.type);
+      if (obj.status) details.push('Status: ' + obj.status);
+      if (obj && typeof obj.done === 'boolean') details.push('done: ' + (isDone(obj) ? 'ja' : 'nein'));
+      add('Horizont', obj.horizon);
+      add('Kontext', obj.context);
+      add('Kontexte', obj.contexts);
+      add('Energie', obj.energie);
+      add('Dauer', obj.dauer);
+      add('needsReview', obj.needsReview);
+      add('confidence', obj.confidence);
+      add('signifiers', obj.signifiers);
+      add('sourceQuote', obj.sourceQuote);
+      add('dismissed', obj.dismissed);
+      add('createdAt', obj.createdAt);
+      add('source', obj.source);
+      ['id', 'cardId', 'parentId', 'zeit', 'time', 'contexts', 'energie', 'dauer', 'needsReview', 'confidence', 'signifiers', 'sourceQuote', 'dismissed', 'createdAt', 'source'].forEach(function (key) { handled[key] = true; });
+      Object.keys(obj).sort().forEach(function (key) { if (!handled[key]) add(key, obj[key]); });
+      return String(obj && obj.text || '') + (details.length ? ' [' + details.join(' · ') + ']' : '');
     }
 
     function formatDailyLogMigrationForPrompt(item, fallbackDate) {
       return [
         'Datum: ' + (item.date || fallbackDate || '—'),
-        'Text: ' + (truncatePromptText(item.text, 300) || '—'),
+        'Text: ' + (String(item.text || '') || '—'),
         'direction: ' + (item.direction || '—'),
         'sourceHorizon: ' + (item.sourceHorizon || '—'),
         'targetHorizon: ' + (item.targetHorizon || '—'),
-        'targetLabel: ' + (truncatePromptText(item.targetLabel, 160) || '—')
+        'targetLabel: ' + (String(item.targetLabel || '') || '—'),
+        'objectId: ' + (item.objectId || '—'),
+        'migratedTo: ' + (item.migratedTo || '—'),
+        'migratedAt: ' + (item.migratedAt || '—')
       ].join(' | ');
     }
 
     function buildDayReviewContextPromptBlock(day) {
       var lines = ['TAG ' + (day.date || 'Ohne Datum')];
       var rawCards = asArray(day.rawCards);
-      var rawLimit = 12;
       lines.push('- Rohkarten:');
-      if (rawCards.length) rawCards.slice(0, rawLimit).forEach(function (card) { lines.push('  - ' + formatDailyLogRawCardForPrompt(card)); });
+      if (rawCards.length) rawCards.forEach(function (card) { lines.push('  - ' + formatDailyLogRawCardForPrompt(card)); });
       else lines.push('  - keine');
-      if (rawCards.length > rawLimit) lines.push('  - … weitere ' + (rawCards.length - rawLimit) + ' Rohkarten nicht ausgeschrieben.');
 
       var summary = buildObjectTypeSummary(day);
       var groups = [
@@ -3546,37 +3630,34 @@
         ['event', 'Ereignisse', summary.event.length ? summary.event : asArray(day.events)],
         ['note', 'Notizen', summary.note],
         ['idea', 'Ideen', summary.idea],
-        ['quote', 'Zitate', summary.quote]
+        ['quote', 'Zitate', summary.quote],
+        ['unknown', 'Sonstige / unbekannte Objekte', summary.unknown]
       ];
       lines.push('- Objekte:');
       groups.forEach(function (group) {
         var items = group[2];
-        var objectLimit = 8;
         lines.push('  - ' + group[1] + ':');
-        if (items.length) items.slice(0, objectLimit).forEach(function (obj) { lines.push('    - ' + formatDailyLogObjectForPrompt(obj)); });
+        if (items.length) items.forEach(function (obj) { lines.push('    - ' + formatDailyLogObjectForPrompt(obj)); });
         else lines.push('    - keine');
-        if (items.length > objectLimit) lines.push('    - … weitere ' + (items.length - objectLimit) + ' Objekte nicht ausgeschrieben.');
       });
 
       var feedItems = asArray(day.feedItems);
       lines.push('- Optionaler Kontext:');
       if (feedItems.length) {
         lines.push('  - FeedItems:');
-        feedItems.slice(0, 5).forEach(function (item) { lines.push('    - ' + truncatePromptText(item.text || item, 300)); });
-        if (feedItems.length > 5) lines.push('    - … weitere ' + (feedItems.length - 5) + ' FeedItems nicht ausgeschrieben.');
+        feedItems.forEach(function (item) { lines.push('    - ' + String(item.text || item)); });
       } else {
         lines.push('  - FeedItems: keine');
       }
-      lines.push('  - Tagesplan: ' + (truncatePromptText(toReadableText(day.plan), 500) || '—'));
+      lines.push('  - Tagesplan: ' + (toReadableText(day.plan) || '—'));
       lines.push('  - reviewDone: ' + (day.reviewDone ? 'ja' : 'nein'));
       lines.push('  - closedAt: ' + (day.closedAt || '—'));
       var migrations = asArray(day.migrations);
       lines.push('  - Migrationen:');
-      if (migrations.length) migrations.slice(0, 8).forEach(function (item) {
+      if (migrations.length) migrations.forEach(function (item) {
         lines.push('    - ' + formatDailyLogMigrationForPrompt(item, day.date));
       });
       else lines.push('    - keine');
-      if (migrations.length > 8) lines.push('    - … weitere ' + (migrations.length - 8) + ' Migrationen nicht ausgeschrieben.');
       return lines.join('\n');
     }
 
@@ -3602,11 +3683,21 @@
 
     function buildDailyLogBasisPromptText(session) {
       var days = getSessionDailyLogAppliedDays(session);
+      var legacyConvertedDays = !days.length && String(session && session.convertedDays || '').trim();
+      var legacyDailyNotes = !days.length && !legacyConvertedDays && String(session && session.dailyNotesRaw || '').trim();
       var lines = [
         'DAILY-LOG-BASIS',
-        'Hinweis: Die Rohkarten liefern den konkreten Tagesverlauf und die Sprache des Tages. Die extrahierten Objekte strukturieren Aufgaben, Ereignisse, Notizen, Ideen und Zitate. Obsidian-Daily-Notes sind optionaler Zusatzkontext, nicht die primäre Pflichtquelle.'
+        'Hinweis: Rohkarten bilden den vollständigen Tagesverlauf in ursprünglicher Sprache ab; Objekte sind die vollständige strukturierte Ableitung. Beide Ebenen sind vollständig zu berücksichtigen und dürfen nicht als überflüssige Dubletten gegeneinander ausgespielt werden. Offene und nicht reviewte Inhalte gehören dazu; reviewDone: false und ein fehlendes closedAt sind Kontext, keine Ausschlussmarker. Separate Obsidian-Daily-Notes gehören nicht zum normalen Workflow.'
       ];
       if (!days.length) {
+        if (legacyConvertedDays) {
+          lines.push('', 'LEGACY-FALLBACK – UMGWANDELTE TAGE (nur weil keine Daily-Log-Basis angewendet ist)', session.convertedDays);
+          return lines.join('\n');
+        }
+        if (legacyDailyNotes) {
+          lines.push('', 'DAILY NOTES DIESER WOCHE (MANUELLER LEGACY-FALLBACK)', session.dailyNotesRaw);
+          return lines.join('\n');
+        }
         lines.push('', 'Keine Daily-Log-Tage für den Review-Zeitraum ausgewählt.');
         return lines.join('\n');
       }
@@ -3692,7 +3783,7 @@
           '- Arbeite nur mit den Inputs, die ich in diesem Chat sende.',
           '- Starte keine Weekly Review ohne die nötigen Inputs.',
           '- Wenn ich die Weekly Review starte, fordere nacheinander an:',
-          '  1. Daily Notes dieser Woche',
+          '  1. angewendete Daily-Log-Tage mit Rohkarten und Objekten (convertedDays nur als Legacy-Fallback)',
           '  2. externe Wochen-Daten (optional: Stimmung / Daylio, Zeittracking / Toggl, Bewegung / Sport, Habits)',
           '  3. letzten Weekly Log (falls vorhanden)',
           '- Trenne in der Weekly Review strikt Beobachtung, Interpretation und Entscheidung.',
@@ -3894,10 +3985,6 @@
           'INPUT 1 – PRIMÄRE DAILY-LOG-BASIS',
           buildDailyLogBasisPromptText(session),
           '',
-          'OPTIONALER MANUELLER ZUSATZKONTEXT – DAILY NOTES / OBSIDIAN-AUSZÜGE',
-          'Falls hier manuelle Daily Notes oder Obsidian-Auszüge vorhanden sind, nutze sie als Ergänzung. Die primäre Tagesbasis sind Daily-Log-Rohkarten und Objekte.',
-          session.dailyNotesRaw || 'Kein manueller Daily-Notes-Zusatzkontext hinterlegt.',
-          '',
           'INPUT 2 – EXTERNE WOCHEN-DATEN (OPTIONAL)',
           buildQuantImportsPromptText(session),
           '',
@@ -3908,9 +3995,6 @@
           [session.previousWeeklyLogSummary, session.lastWeeklyLogUrl].filter(Boolean).join('\n') || 'Kein alter Weekly-Log-Kontext hinterlegt.',
           '',
           'ERGÄNZENDE INPUTS',
-          'Umgewandelte Tage:',
-          session.convertedDays || '—',
-          '',
           'Annotationen:',
           session.annotations || '—',
           '',
@@ -3920,6 +4004,9 @@
           buildWeeklyTaskOverviewPromptText(session, appliedDailyLogDays),
           '',
           'REGELN',
+          '- Rohkarten und Objekte vollständig berücksichtigen: Rohkarten bewahren Verlauf und Originalsprache, Objekte die strukturierte Ableitung; keines ersetzt das andere.',
+          '- Offene und nicht reviewte Inhalte einbeziehen. reviewDone: false und fehlendes closedAt niemals als Ausschlussmarker behandeln.',
+          '- Separate Obsidian-Daily-Notes sind kein regulärer Input. convertedDays ist ausschließlich ohne angewendete Daily-Log-Tage ein Legacy-Fallback.',
           '- Markiere fehlende Tage oder Unklarheiten, bevor du interpretierst.',
           '- Trenne strikt Beobachtung, Interpretation und Entscheidung.',
           '- Wenn etwas nicht aus den Inputs hervorgeht, kennzeichne es als unsicher statt zu raten.',
